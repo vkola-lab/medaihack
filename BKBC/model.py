@@ -2,15 +2,13 @@
 """
 model.py — Model definitions and shared constants
 ==================================================
-Central place for all configuration that is shared across preprocess.py,
-train_eval.py, and predict.py.  Import from here rather than duplicating
-constants in each script.
+Central place for all configuration shared across train.py, evaluate.py,
+and predict.py.
 
 Exported symbols
 ----------------
 CLINICAL_FEATURES  : list[str]   — clinical covariate column names
 CV_FOLDS           : int         — number of stratified CV folds
-TEST_SIZE          : float       — fraction of data held out as test set
 RANDOM_SEED        : int         — global random seed for reproducibility
 MODELS             : dict        — name → sklearn-compatible estimator
 build_model(name)  : function    — return a fresh (unfitted) model by name
@@ -25,21 +23,16 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-# ── SECTION 0: Constants ───────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
 
 # Clinical features included alongside the 6,592 protein abundances.
-# These must be present in merged_anonymized.csv.
 CLINICAL_FEATURES = ["age", "sex", "baseline_egfr_23"]
 
 CV_FOLDS    = 5      # stratified k-fold splits for cross-validation
-TEST_SIZE   = 0.2    # fraction of labelled data held out as a final test set
 RANDOM_SEED = 42     # controls all random operations for reproducibility
 
-# ── SECTION 1: Model definitions ──────────────────────────────────────────────
+# ── Model definitions ────────────────────────────────────────────────────────
 # Each entry: display name → sklearn-compatible estimator.
-#
-# Both models are evaluated with the same CV strategy and on the same
-# held-out test set so their performance is directly comparable.
 #
 # Design notes:
 #   XGBoost  — tree ensemble; scale-invariant; colsample_bytree=0.1 is
@@ -72,22 +65,12 @@ MODELS = {
 }
 
 
-# ── SECTION 2: Factory function ────────────────────────────────────────────────
+# ── Factory function ──────────────────────────────────────────────────────────
 
 def build_model(name: str):
     """
     Return a fresh (unfitted) model by name.
 
-    Parameters
-    ----------
-    name : str   one of the keys in MODELS
-
-    Returns
-    -------
-    sklearn-compatible estimator (unfitted clone)
-
-    Example
-    -------
     >>> from model import build_model
     >>> clf = build_model("XGBoost")
     >>> clf.fit(X_train, y_train)
@@ -97,8 +80,6 @@ def build_model(name: str):
         raise ValueError(f"Unknown model '{name}'. Choose from: {list(MODELS)}")
     return clone(MODELS[name])
 
-
-# ── SECTION 3: Sanity check ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import numpy as np
@@ -110,10 +91,9 @@ if __name__ == "__main__":
 
     print(f"\nClinical features : {CLINICAL_FEATURES}")
     print(f"CV folds          : {CV_FOLDS}")
-    print(f"Test size         : {TEST_SIZE}")
     print(f"Random seed       : {RANDOM_SEED}")
 
-    # Quick smoke test: fit on random data
+    # Quick smoke test
     rng = np.random.default_rng(0)
     X_dummy = rng.standard_normal((50, 10))
     y_dummy = rng.integers(0, 2, 50)
