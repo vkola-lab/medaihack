@@ -280,6 +280,24 @@ Pre-extracted features (read-only, shared across teams):
 
 ---
 
+## Visualizing Whole Slide Images with QuPath
+
+If you want to view the original whole slide images, you can use QuPath on the SCC:
+
+1. Start an OnDemand Desktop with 4 cores for viewing the files. Don't select a GPU if this is for viewing only. Have it load the `qupath/0.5.1` module.
+2. When the desktop opens, in the terminal change to the image directory:
+   ```bash
+   cd /projectnb/medaihack/VI_LUAD_Project/WSI_Data/wsi
+   ```
+3. Start QuPath:
+   ```bash
+   QuPath
+   ```
+4. When the GUI opens, click **File → Open**. Select a `.svs` image that you'd like to see.
+5. When finished, click **File → Quit** to close QuPath.
+
+---
+
 ## Tips for Improvement
 
 The baseline is intentionally simple. Here are directions worth exploring:
