@@ -18,7 +18,7 @@ Your model will be evaluated on an **external held-out test cohort** (KPMP) usin
 Training data is located at:
 
 ```
-../../BKBC_train/train.csv
+/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
 ```
 
 It contains **426 patients** (one row each) with the following columns:
@@ -32,7 +32,7 @@ It contains **426 patients** (one row each) with the following columns:
 | `baseline_egfr_23` | Baseline eGFR (ml/min/1.73 m²) |
 | `feature_XXXX` × 6,592 | Log₂-normalised, ComBat-corrected SomaScan plasma protein abundances |
 
-All protein features have been **batch-corrected** using ComBat so they are directly comparable across the training and test cohorts.
+All protein features have been **batch-corrected** using reference ComBat so they are directly comparable across the training and test cohorts.
 
 ---
 
@@ -46,9 +46,9 @@ One person per team should be responsible for creating and managing the team's v
 module load medaihack/spring-2026
 module load python3/3.12.4
 
-# Replace YOUR_TEAM and venv_name with your team directory and preferred name
-virtualenv /projectnb/medaihack/YOUR_TEAM/venv_name
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
+# Within your directory activate the following commands
+virtualenv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -60,7 +60,7 @@ pip install -r requirements.txt
 ```bash
 module load medaihack/spring-2026
 module load python3/3.12.4
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
+source .venv/bin/activate
 ```
 
 **Verify your setup:**
@@ -74,7 +74,7 @@ python model.py
 ## Pipeline
 
 ```
-BKBC_train/train.csv
+/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
        │
        ├──→ evaluate.py    (iterate: k-fold CV on training data)
        │        └── results/cv_results.csv, confusion matrices
@@ -93,7 +93,7 @@ BKBC_train/train.csv
 Use this to iterate on your model. It runs stratified k-fold CV on the training data and reports AUC and log loss per fold.
 
 ```bash
-python evaluate.py --data ../../BKBC_train/train.csv
+python evaluate.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
 ```
 
 **Output:**
@@ -108,7 +108,7 @@ python evaluate.py --data ../../BKBC_train/train.csv
 Once you are happy with your model, train on ALL the training data and save weights:
 
 ```bash
-python train.py --data ../../BKBC_train/train.csv
+python train.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
 ```
 
 This saves `weights/xgboost_model.json` and `weights/feature_cols.json`.
@@ -121,6 +121,9 @@ This saves `weights/xgboost_model.json` and `weights/feature_cols.json`.
 bash predict.sh /path/to/new_data.csv
 # or with custom output path:
 bash predict.sh /path/to/new_data.csv my_predictions.csv
+
+# for the sake of example, evaluate on the training set
+bash predict.sh /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
 ```
 
 If the input file contains an `ati` column, evaluation metrics are printed automatically.
