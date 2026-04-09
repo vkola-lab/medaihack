@@ -2,7 +2,7 @@
 
 This starter code gives you a working end-to-end pipeline for the VI-LUAD classification task. Run it as-is to get a baseline, then explore and improve specific steps. Refer to the provided slide deck for task background, data description, and evaluation criteria.
 
-**Evaluation:** Your final model will be evaluated on external test datasets from 2 different institutions using **log loss** as the primary metric.
+**Evaluation:** Your final model will be evaluated on external test datasets from 2 different institutions using **per-patient log loss** as the scoring metric. See Step 2 for how patient-level predictions are aggregated and Step 3 for how to submit.
 
 ---
 
@@ -68,7 +68,7 @@ To install additional packages (e.g. if your approach needs `transformers` or `e
 pip install <package-name>
 ```
 
-> **Warning:** Do **not** reinstall or upgrade `torch`, `torchvision`, or any `cuda`-related package. The versions in `requirements.txt` are matched to the CUDA driver on the cluster. Upgrading them will likely break GPU support.
+> **Warning:** Do **not** reinstall or upgrade `torch`, `torchvision`, or any `cuda`-related package. These versions are matched to the cluster and scoring environment. Your model will fail to be scored if you use different versions.
 
 ---
 
@@ -257,6 +257,34 @@ Each `predictions/fold_{i}_patients.json` contains one entry per test patient wi
 
 ---
 
+## Step 3: Leaderboard Submission (`predict.sh` + `predict.py`)
+
+Your model's leaderboard score is determined by per-patient log loss on a held-out external test set from 2 different institutions. The organizers will run `predict.sh` on your behalf - you do not need to run it yourself (you will not have access to the test data).
+
+**What you need to do:**
+
+1. Open `predict.sh` and fill in:
+   - `TEAM` - your team's directory name (same as YOUR_TEAM above)
+   - `CHECKPOINT` - path to your model checkpoint file
+
+2. If you used the baseline model as-is, no further changes are needed.
+
+3. If you changed the model architecture, open `predict.py` and update `load_checkpoint()` (Section 1) to import and instantiate your model correctly. Your model must:
+   - Accept a feature tensor of shape `(N, 1536)` as input
+   - Return logits of shape `(1, 2)` as the first element of the output tuple
+
+Do not modify Sections 2-6 of `predict.py`.
+
+**Sanity check:** Before submitting, verify that your virtual environment has the correct PyTorch version:
+
+```bash
+python -c "import torch; print(torch.__version__)"
+```
+
+This should print `2.8.0`. If it does not, your model will fail to be scored.
+
+---
+
 ## Directory Structure
 
 After training your directory should look like:
@@ -272,6 +300,8 @@ After training your directory should look like:
 │   │   └── ...  fold_4.json
 │   ├── run_create_splits_example.sh
 │   ├── run_train_eval_example.sh
+│   ├── predict.py                 # leaderboard inference (modify Section 1 if needed)
+│   ├── predict.sh                 # leaderboard submission (fill in TEAM + CHECKPOINT)
 │   ├── requirements.txt
 │   └── README.md
 ├── checkpoints/
