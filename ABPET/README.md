@@ -117,6 +117,35 @@ python train.py --train_csv ../data/train.csv --val_csv ../data/val.csv
 # Predict
 python predict.py --csv ../data/val.csv --checkpoint best_model.pt
 ```
+## Pipeline
+
+```text
+Preprocessed 3D amyloid PET volumes (.npy)
+(shape: 1 x 128 x 128 x 128, float32, normalized to [0,1])
++ metadata from train.csv / val.csv
+(columns: npy_path, CENTILOIDS, TRACER.AMY, ID)
+            |
+            v
+dataset.py  --->  load PET volume + tracer label + centiloid target
+            |
+            v
+model.py    --->  3D CNN image encoder
+                  + tracer embedding
+                  + feature fusion
+                  + regression head
+            |
+            v
+losses.py   --->  regression loss
+                  (MAE / SmoothL1 / weighted loss)
+            |
+            v
+train.py    --->  checkpoints/best_model.pt        (best model weights)
+                  logs/                            (training + validation logs)
+                  console: train loss, val MAE, Pearson correlation
+            |
+            v
+predict.py  --->  predictions.csv / console output
+                  predicted centiloid score per subject
 
 ## Evaluation
 
