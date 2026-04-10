@@ -70,10 +70,10 @@ pip install <package-name>
 
 ## Data
 
-| Split      | Cohort | N Samples | Description                               |
-| ---------- | ------ | --------- | ----------------------------------------- |
-| Training   | NACC   | 2,000     | National Alzheimer's Coordinating Center  |
-| Validation | A4     | 500       | Anti-Amyloid Treatment in Asymptomatic AD |
+| Split      | Cohorts   | N Samples | Description                                              |
+| ---------- | --------- | --------- | -------------------------------------------------------- |
+| Training   | NACC + A4 | 2,000     | 1,195 NACC + 805 A4 samples                              |
+| Validation | NACC + A4 | 500       | 305 NACC + 195 A4 samples                                |
 
 Each sample is a preprocessed `.npy` file with an associated centiloid score and tracer label.
 
