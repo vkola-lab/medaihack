@@ -18,6 +18,10 @@ Sanity check
     python model.py
 """
 
+import os
+nslots = int(os.environ.get('NSLOTS', 1))
+nslots = nslots - 1 if nslots > 1 else nslots
+
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -50,7 +54,7 @@ MODELS = {
         colsample_bytree = 0.1,      # sample 10 % of features per tree
         eval_metric      = "logloss",
         random_state     = RANDOM_SEED,
-        n_jobs           = -1,
+        n_jobs           = nslots,
     ),
     "Lasso LR": Pipeline([
         ("scaler", StandardScaler()),
