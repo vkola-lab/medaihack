@@ -2,7 +2,7 @@
 
 Ranked by binary log loss (lower is better).
 
-Last updated: 2026-04-11 12:09:41
+Last updated: 2026-04-11 12:09:53
 
 | Rank | Team | Log Loss | Submitted |
 |------|------|----------|-----------|
@@ -15,7 +15,7 @@ Last updated: 2026-04-11 12:09:41
 | 7 | Team 12 | 0.456419 | 2026-04-11 12:09:10 |
 | 8 | Team 8 | 0.456419 | 2026-04-11 12:09:26 |
 | 9 | Team 15 | 0.456419 | 2026-04-11 12:09:05 |
-| 10 | Team 22 | 0.484356 | 2026-04-11 12:09:07 |
+| 10 | Team 22 | 0.484356 | 2026-04-11 12:09:52 |
 | 11 | Team 14 | 0.623582 | 2026-04-11 12:09:18 |
 
 # ABPET Leaderboard - Ranked by MAE (lower is better)
