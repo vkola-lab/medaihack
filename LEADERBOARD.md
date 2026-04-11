@@ -1,9 +1,5 @@
 # BKBC Leaderboard
 
-Ranked by binary log loss (lower is better).
-
-Last updated: 2026-04-11 12:19:55
-
 | Rank | Team | Log Loss | Submitted |
 |------|------|----------|-----------|
 | 1 | Team 22 | 0.431276 | 2026-04-11 12:18:43 |
@@ -18,12 +14,15 @@ Last updated: 2026-04-11 12:19:55
 | 10 | Team 15 | 0.456419 | 2026-04-11 12:18:42 |
 | 11 | Team 14 | 0.636492 | 2026-04-11 12:19:01 |
 
-# ABPET Leaderboard - Ranked by MAE (lower is better)
+# ABPET Leaderboard
 
 | Rank | Team | MAE | Samples |
 |------|------|-----|---------|
 | 1 | Team 24 | 28.1010 | 426 |
 | 2 | Baseline | 28.1269 | 426 |
-| 3 | Team 16 | 28.2612 | 426 |
-| 4 | Team 7 | 30.1555 | 426 |
-| 5 | Team 23 | 32.2365 | 426 |
+| 3 | Team 25 | 28.1269 | 426 |
+| 4 | Team 16 | 28.2612 | 426 |
+| 5 | Team 7 | 30.1555 | 426 |
+| 6 | Team 23 | 32.2364 | 426 |
+| 7 | Team 12 | nan | 434 |
+
