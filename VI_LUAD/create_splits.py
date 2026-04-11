@@ -18,7 +18,7 @@ With imbalanced classes, random splits might put most VI-positive patients in
 train and few in test. Stratification ensures each fold's train/test set has
 the same class ratio as the full dataset.
 
-Output (in --splits_dir, default: starter_code/splits/):
+Output (in --splits_dir, default: splits/):
   fold_0.json  ...  fold_4.json
 
 Each JSON file contains:
@@ -28,14 +28,14 @@ Each JSON file contains:
   }
 
 Usage:
-  python starter_code/create_splits.py
+  python create_splits.py
 
   # Custom splits directory or number of folds:
-  python starter_code/create_splits.py \\
+  python create_splits.py \\
       --splits_dir my_splits --n_folds 3 --random_seed 0
 
   # Print the label distribution and fold summary, but don't save:
-  python starter_code/create_splits.py --dry_run
+  python create_splits.py --dry_run
 """
 
 import os

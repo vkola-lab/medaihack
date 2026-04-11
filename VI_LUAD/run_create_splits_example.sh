@@ -6,7 +6,7 @@
 # clinical label file. Run this once before training.
 #
 # Usage (from your project directory in an interactive session):
-#   bash starter_code/run_create_splits_example.sh
+#   bash run_create_splits_example.sh
 #
 # This takes only a few seconds and requires no GPU.
 
@@ -14,11 +14,11 @@ module load medaihack/spring-2026
 module load python3/3.12.4
 source /projectnb/medaihack/YOUR_TEAM/vi_luad/bin/activate
 
-# Splits are saved to starter_code/splits/ inside your project directory.
+# Splits are saved to splits/ inside your project directory.
 # Make sure you run this script from /projectnb/medaihack/YOUR_TEAM/.
-python starter_code/create_splits.py \
+python create_splits.py \
     --label_file /projectnb/medaihack/VI_LUAD_Project/Clinical_Data/hackathon_label.txt \
-    --splits_dir starter_code/splits
+    --splits_dir splits
 
 # Optional: use a different number of folds or random seed
 #   --n_folds    3

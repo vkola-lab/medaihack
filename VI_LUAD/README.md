@@ -21,14 +21,15 @@ NONTUMOR slides (normal lung tissue) are excluded from the train/test splits but
 
 ## Getting Started
 
-Copy the `starter_code` directory to your team's project directory and work from there. All paths in the scripts are relative to your project directory.
+Clone the GitHub repo into your team's project directory and work from there.
 
 ```bash
-cp -r /projectnb/medaihack/VI_LUAD/starter_code /projectnb/medaihack/YOUR_TEAM/
 cd /projectnb/medaihack/YOUR_TEAM
+git clone https://github.com/vkola-lab/medaihack.git
+cd medaihack/VI_LUAD
 ```
 
-Run all subsequent commands from `/projectnb/medaihack/YOUR_TEAM`.
+Run all subsequent commands from `/projectnb/medaihack/YOUR_TEAM/medaihack/VI_LUAD`.
 
 ---
 
@@ -43,7 +44,7 @@ module load medaihack/spring-2026
 module load python3/3.12.4
 virtualenv /projectnb/medaihack/YOUR_TEAM/vi_luad
 source /projectnb/medaihack/YOUR_TEAM/vi_luad/bin/activate
-pip install -r starter_code/requirements.txt
+pip install -r requirements.txt
 ```
 
 The `medaihack/spring-2026` module sets cache directories (`HF_HOME`, `TORCH_HOME`, etc.) to `/projectnb/medaihack/.cache/$USER` so they don't fill your home directory.
@@ -105,12 +106,12 @@ Reads the clinical label file, groups slides by patient, and creates 5-fold stra
 **Submit the job:**
 ```bash
 # Edit the script: fill in YOUR_TEAM with your team's directory name
-bash starter_code/run_create_splits_example.sh
+bash run_create_splits_example.sh
 ```
 
 Since no GPU is required, this completes in seconds. You can also run it directly in a terminal:
 ```bash
-python starter_code/create_splits.py
+python create_splits.py
 ```
 
 **Expected output (abridged):**
@@ -137,11 +138,11 @@ Fold 0: train=403 slides (196 patients) | test=103 slides (49 patients)
 ============================================================
 STEP: Saving splits
 ============================================================
-Saved fold 0 → starter_code/splits/fold_0.json
+Saved fold 0 → splits/fold_0.json
 ...
-Saved fold 4 → starter_code/splits/fold_4.json
+Saved fold 4 → splits/fold_4.json
 
-Done! Splits saved to: starter_code/splits
+Done! Splits saved to: splits
 ```
 
 ---
@@ -157,14 +158,14 @@ Trains a Multiple Instance Learning (MIL) model on the pre-extracted UNI2-h feat
 When submitting your job, pass:
 ```
 --features_dir /projectnb/medaihack/VI_LUAD_Project/WSI_Data/processed
---splits_dir   starter_code/splits
+--splits_dir   splits
 ```
 
 ### Submit the job
 
 ```bash
 # Edit the script: fill in YOUR_TEAM with your team's directory name
-bash starter_code/run_train_eval_example.sh
+bash run_train_eval_example.sh
 ```
 
 **Monitor:**
@@ -242,8 +243,8 @@ CROSS-VALIDATION SUMMARY
     mean      0.6972    0.6512      0.6000
      std      0.0581    0.0453      0.0702
 
-Done. Checkpoints saved to: starter_code/checkpoints
-      Predictions saved to:  starter_code/predictions
+Done. Checkpoints saved to: checkpoints
+      Predictions saved to:  predictions
 ==========================================
 Job finished: Wed Apr  1 23:19:37 EDT 2026
 ==========================================
@@ -290,20 +291,19 @@ This should print `2.8.0`. If it does not, your model will fail to be scored.
 After training your directory should look like:
 
 ```
-/projectnb/medaihack/YOUR_TEAM/
-├── starter_code/
-│   ├── create_splits.py           # patient-level cross-validation splits
-│   ├── model.py                   # MIL model definition
-│   ├── train_eval.py              # training + evaluation loop
-│   ├── splits/
-│   │   ├── fold_0.json            # {"train": [...], "test": [...]}
-│   │   └── ...  fold_4.json
-│   ├── run_create_splits_example.sh
-│   ├── run_train_eval_example.sh
-│   ├── predict.py                 # leaderboard inference (modify Section 1 if needed)
-│   ├── predict.sh                 # leaderboard submission (fill in TEAM + CHECKPOINT)
-│   ├── requirements.txt
-│   └── README.md
+/projectnb/medaihack/YOUR_TEAM/medaihack/VI_LUAD/
+├── create_splits.py               # patient-level cross-validation splits
+├── model.py                       # MIL model definition
+├── train_eval.py                  # training + evaluation loop
+├── predict.py                     # leaderboard inference (modify Section 1 if needed)
+├── predict.sh                     # leaderboard submission (fill in TEAM + CHECKPOINT)
+├── run_create_splits_example.sh
+├── run_train_eval_example.sh
+├── requirements.txt
+├── README.md
+├── splits/
+│   ├── fold_0.json                # {"train": [...], "test": [...]}
+│   └── ...  fold_4.json
 ├── checkpoints/
 │   ├── fold_0.pth                 # best model checkpoint per fold
 │   └── ...  fold_4.pth
@@ -352,6 +352,6 @@ The baseline is intentionally simple. Here are directions worth exploring:
 
 For a full list of configurable options, run:
 ```bash
-python starter_code/create_splits.py --help
-python starter_code/train_eval.py --help
+python create_splits.py --help
+python train_eval.py --help
 ```

@@ -83,7 +83,7 @@ echo "[INFO] Virtual environment '/projectnb/medaihack/$TEAM/vi_luad' activated.
 # --- Run prediction ----------------------------------------------------------
 
 echo "[INFO] Running predict.py ..."
-python starter_code/predict.py \
+python predict.py \
     --team          $TEAM \
     --checkpoint    $CHECKPOINT \
     --test_metadata "$TEST_METADATA" \

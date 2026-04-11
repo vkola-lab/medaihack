@@ -6,7 +6,7 @@
 # The baseline finishes in ~5 minutes on a GPU interactive session.
 #
 # Usage (from your project directory in an interactive GPU session):
-#   bash starter_code/run_train_eval_example.sh
+#   bash run_train_eval_example.sh
 
 module load medaihack/spring-2026
 module load python3/3.12.4
@@ -16,11 +16,11 @@ source /projectnb/medaihack/YOUR_TEAM/vi_luad/bin/activate
 FEATURES_DIR=/projectnb/medaihack/VI_LUAD_Project/WSI_Data/processed
 
 # Paths under your project directory (run this script from /projectnb/medaihack/YOUR_TEAM/):
-SPLITS_DIR=starter_code/splits
+SPLITS_DIR=splits
 CHECKPOINTS_DIR=checkpoints
 PREDICTIONS_DIR=predictions
 
-python starter_code/train_eval.py \
+python train_eval.py \
     --features_dir $FEATURES_DIR \
     --splits_dir   $SPLITS_DIR \
     --save_dir     $CHECKPOINTS_DIR \
@@ -37,4 +37,4 @@ python starter_code/train_eval.py \
 #   --batch_size  N   Slides per gradient step (default: 1; keep at 1 for MIL)
 #   --folds       N…  Run only specific folds, e.g. --folds 0 1 (default: all 5)
 #
-# Run `python starter_code/train_eval.py --help` for the full parameter list.
+# Run `python train_eval.py --help` for the full parameter list.
