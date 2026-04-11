@@ -16,9 +16,10 @@ Ranked by binary log loss (lower is better). Baseline starter code performance: 
 
 Ranked by MAE (lower is better). Baseline starter code performance: MAE = 28.1269
 
-| Rank | Team | MAE | Pearson r | Samples |
-|------|------|-----|-----------|---------|
-| 1 | Team 24 | 28.1010 | 0.7020 | 426 |
-| 2 | Baseline  | 28.1269 | 0.6959 | 426 |
-| 3 | Team 16 | 28.2612 | 0.7514 | 426 |
-| 4 | Team 7 | 30.1555 | 0.7041 | 426 |
+| Rank | Team | MAE | Samples |
+|------|------|-----|---------|
+| 1 | Team 24 | 28.1010 | 426 |
+| 2 | Baseline | 28.1269 | 426 |
+| 3 | Team 16 | 28.2612 | 426 |
+| 4 | Team 7 | 30.1555 | 426 |
+| 5 | Team 23 | 32.2365 | 426 |
