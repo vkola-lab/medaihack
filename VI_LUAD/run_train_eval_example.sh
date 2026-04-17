@@ -1,40 +1,68 @@
-#!/bin/bash
+#!/bin/bash -l
 
-# run_train_eval_example.sh
-# -------------------------
-# Trains the baseline MIL model with 5-fold cross-validation and evaluates it.
-# The baseline finishes in ~5 minutes on a GPU interactive session.
-#
-# Usage (from your project directory in an interactive GPU session):
-#   bash run_train_eval_example.sh
+#$ -N vi_luad_train_team15
+#$ -P medaihack
+#$ -j y
+#$ -o train_eval_team15.log
+#$ -l h_rt=12:00:00
+#$ -l mem_per_core=8G
+#$ -pe omp 8
+#$ -l gpus=1
+#$ -l gpu_c=8.9
+#$ -l gpu_type=L40S
 
+# =============================================================================
+
+# ---- Fill in your team name ----
+TEAM=team15
+
+# --- cd to the team's project directory --------------------------------------
+cd /projectnb/medaihack/$TEAM || { echo "[ERROR] Cannot cd to /projectnb/medaihack/$TEAM"; exit 1; }
+echo "[INFO] Working directory: $(pwd)"
+
+# --- Load modules and activate the team's virtual environment ----------------
 module load medaihack/spring-2026
 module load python3/3.12.4
-source /projectnb/medaihack/YOUR_TEAM/vi_luad/bin/activate
+source /projectnb/medaihack/$TEAM/vi_luad/bin/activate
+echo "[INFO] Virtual environment activated."
+nvidia-smi || echo "[WARN] nvidia-smi unavailable"
 
-# Pre-extracted UNI2-h features (shared, read-only — do not copy these):
 FEATURES_DIR=/projectnb/medaihack/VI_LUAD_Project/WSI_Data/processed
-
-# Paths under your project directory (run this script from /projectnb/medaihack/YOUR_TEAM/):
-SPLITS_DIR=splits
+SPLITS_DIR=starter_code/splits
 CHECKPOINTS_DIR=checkpoints
 PREDICTIONS_DIR=predictions
 
-python train_eval.py \
-    --features_dir $FEATURES_DIR \
-    --splits_dir   $SPLITS_DIR \
-    --save_dir     $CHECKPOINTS_DIR \
-    --preds_dir    $PREDICTIONS_DIR \
-    --epochs       20 \
-    --lr           1e-4 \
-    --weight_decay 1e-4 \
-    --hidden_dim   256 \
-    --dropout      0.25 \
-    --eval_every   5 \
-    --seed         42
+echo "[INFO] Creating splits..."
+python starter_code/create_splits.py \
+    --splits_dir    $SPLITS_DIR \
+    --n_folds       5 \
+    --val_frac      0.15 \
+    --include_nontumor
 
-# Additional parameters (all have sensible defaults):
-#   --batch_size  N   Slides per gradient step (default: 1; keep at 1 for MIL)
-#   --folds       N…  Run only specific folds, e.g. --folds 0 1 (default: all 5)
-#
-# Run `python train_eval.py --help` for the full parameter list.
+echo "[INFO] Starting training..."
+python -u starter_code/train_eval.py \
+    --features_dir     $FEATURES_DIR \
+    --splits_dir       $SPLITS_DIR \
+    --save_dir         $CHECKPOINTS_DIR \
+    --preds_dir        $PREDICTIONS_DIR \
+    --epochs           50 \
+    --patience         10 \
+    --lr               1e-4 \
+    --weight_decay     1e-4 \
+    --label_smoothing  0.05 \
+    --pos_weight       auto \
+    --branch_ce_weight 0.5 \
+    --entropy_weight   0.01 \
+    --hidden_dim       512 \
+    --dropout          0.25 \
+    --n_branches       5 \
+    --top_k            10 \
+    --mask_prob        0.6 \
+    --use_pe           True \
+    --pe_dim           64 \
+    --clip_eps         0.02 \
+    --n_seeds          5 \
+    --base_seed        42 \
+    --num_workers      8
+
+echo "[INFO] train_eval.py finished with exit code $?"

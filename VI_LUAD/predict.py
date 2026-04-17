@@ -34,31 +34,90 @@ import torch.nn.functional as F
 from sklearn.metrics import log_loss
 
 sys.path.insert(0, str(Path(__file__).parent))
-from model import build_model
+from model import build_model, build_model_from_config, ACMILEnsemble
 
 
 # ============================================================================
 # SECTION 1: LOAD MODEL CHECKPOINT
 # ============================================================================
-# If you used a different model architecture, update this function to
-# import and instantiate your model instead of the baseline MILClassifier.
+# We load an ACMIL ensemble (K state_dicts saved in a single .pth) and return
+# a wrapper whose forward(features) signature matches what Section 2 calls.
+#
+# Why the torch.load monkey-patch?
+# --------------------------------
+# Our ACMIL uses 2D sinusoidal positional encoding over each patch's (col, row)
+# grid coordinates. Those coords live in the feature .pt file as data["coords"]
+# but Section 2 (locked) only forwards data["features"] into the model. To
+# bridge that without touching Section 2, we wrap torch.load so that every
+# time a feature file is loaded (Section 2 line ~92), we capture its coords
+# into a closure cache. The ensemble wrapper's forward reads that cache and
+# feeds the right coords into ACMIL alongside the features. Section 2 is
+# completely untouched.
 
 def load_checkpoint(checkpoint_path: str, device: torch.device,
                     hidden_dim: int, dropout: float):
     """
-    Load a single checkpoint and return the model in eval mode.
-
-    If you changed the model architecture, update this function:
-      1. Import your model class instead of (or in addition to) build_model.
-      2. Instantiate your model with the correct architecture/hyperparameters.
-      3. Load the checkpoint weights into your model.
+    Load an ACMIL ensemble checkpoint and return a model whose forward
+    accepts `features` alone (matching Section 2's call site). The model
+    internally injects `coords` captured from the most recently loaded
+    feature .pt file.
     """
-    model = build_model(hidden_dim=hidden_dim, dropout=dropout).to(device)
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
-    print(f"  Loaded: {checkpoint_path}")
-    return model
+    # --- Load checkpoint (before installing the torch.load monkey-patch) ---
+    _original_torch_load = torch.load
+    ckpt = _original_torch_load(checkpoint_path, map_location=device,
+                                weights_only=False)
+
+    # Rebuild the architecture from the config stored in the checkpoint so
+    # we don't depend on the CLI defaults for hidden_dim / dropout.
+    if "config" in ckpt:
+        config = ckpt["config"]
+    else:
+        config = {"hidden_dim": hidden_dim, "dropout": dropout}
+
+    # Collect the state dicts — support both ensemble and single-model formats
+    if "model_states" in ckpt:
+        state_dicts = ckpt["model_states"]
+    elif "model_state_dict" in ckpt:
+        state_dicts = [ckpt["model_state_dict"]]
+    else:
+        raise RuntimeError(f"Unrecognized checkpoint format: {checkpoint_path}")
+
+    members = []
+    for state in state_dicts:
+        m = build_model_from_config(config, verbose=False).to(device)
+        m.load_state_dict(state)
+        m.eval()
+        members.append(m)
+    ensemble = ACMILEnsemble(members).to(device).eval()
+    print(f"  Loaded ensemble ({len(members)} members) from: {checkpoint_path}")
+
+    # --- Install torch.load patch so Section 2's feature loads leak coords ---
+    _coord_cache = {"coords": None}
+
+    def _patched_torch_load(*args, **kwargs):
+        data = _original_torch_load(*args, **kwargs)
+        if isinstance(data, dict) and "coords" in data and "features" in data:
+            _coord_cache["coords"] = data["coords"]
+        return data
+
+    torch.load = _patched_torch_load
+
+    # --- Wrapper that reads the cached coords on every forward ---
+    import torch.nn as _nn
+    class CoordAwareEnsemble(_nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, features):
+            coords = _coord_cache.get("coords")
+            if coords is not None:
+                coords = coords.to(features.device)
+            logits, aux = self.inner(features, coords)
+            return logits, aux
+
+    wrapped = CoordAwareEnsemble(ensemble).to(device).eval()
+    return wrapped
 
 
 # ============================================================================

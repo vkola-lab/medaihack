@@ -1,691 +1,634 @@
 """
-train_eval.py — Training and Evaluation Script for VI-LUAD MIL Model
-======================================================================
-As a participant, this is the main script you will run. Read this
-docstring to understand this training and evaluation pipeline. It:
-  1. Loads pre-extracted patch features (from preprocess.py)
-  2. Loads the 5-fold cross-validation splits (from preprocess.py)
-  3. For each fold: trains the MIL model, evaluates on the test set, saves a checkpoint
-  4. Aggregates and prints cross-validation performance
+train_eval.py — Train + Evaluate ACMIL with Patient-Max BCE, Early Stopping,
+                Temperature Scaling, and Multi-Seed Ensembling
+===============================================================================
+Per fold: train K ACMIL models with different random seeds. Each model is
+trained with patient-max BCE loss + label smoothing + auxiliary branch-CE +
+attention entropy regularization, with early stopping on a held-out val split
+(built by create_splits.py). After training, temperature scaling is fit on the
+same val split to calibrate the model. The K trained models are then bundled
+into a single ensemble checkpoint (one .pth file per fold, containing all K
+state_dicts), which predict.py can load and average.
 
-The model (from model.py) is a mean-pooling MIL classifier:
-  - Input: a bag of N patch feature vectors (N × feature_dim; default feature_dim=1536)
-  - Step 1: Mean pooling → one 1536-dim slide embedding
-  - Step 2: MLP head → binary logits (NONVITUMOR=0, VITUMOR=1)
+Final output per fold:
+  checkpoints/fold_{i}_ensemble.pth   — single file containing K state_dicts
+  predictions/fold_{i}_patients.json — per-patient test predictions
 
-Training details (baseline — minimum setup):
-  - Optimizer: Adam with weight decay
-  - Loss: cross-entropy (binary)
-  - One slide per gradient step (batch_size=1)
-  - Fixed number of epochs
-
-Metrics reported (both per-slide and per-patient):
-  - Log loss: negative log-likelihood of the true labels under the predicted
-              probability distribution. Lower is better; 0 means perfect.
-  - AUC: area under the ROC curve. Higher is better; 1.0 is perfect.
-
-  Per-patient aggregation rule:
-    A patient is predicted VITUMOR if at least one of their slides is predicted
-    VITUMOR (argmax == 1). For AUC, the patient score is max(P(VITUMOR)) across
-    all slides — this continuously reflects the "at least one" logic.
+After all folds finish, a super-ensemble pooling every seed from every fold
+is saved as checkpoints/final_ensemble.pth — this is what you submit to the
+leaderboard.
 
 Usage:
-  # Train on all 5 folds:
-  python train_eval.py
-
-  # Quick test on fold 0 only, 5 epochs:
-  python train_eval.py --folds 0 --epochs 5
-
-  # Custom paths:
-  python train_eval.py \\
-      --features_dir ./features \\
-      --splits_dir   ./splits \\
-      --save_dir     ./checkpoints \\
-      --epochs 20 --lr 1e-4
-
-Output:
-  ./checkpoints/fold_0.pth           — model checkpoint for fold 0 (best training loss)
-  ...
-  ./checkpoints/fold_4.pth           — model checkpoint for fold 4
-  ./predictions/fold_0.json          — per-slide predictions for fold 0 test set
-  ./predictions/fold_0_patients.json — per-patient predictions for fold 0 test set
-  ...
-  Console output: per-epoch loss + test metrics every --eval_every epochs,
-                  cross-validation summary (slide-level and patient-level).
-
-Per-slide prediction JSON format:
-  [
-    {
-      "filename":   "10987.svs",
-      "pid":        "109889",
-      "true_label": "NONVITUMOR",
-      "pred_label": "VITUMOR",
-      "probs": {"NONVITUMOR": 0.493, "VITUMOR": 0.507}
-    },
-    ...
-  ]
-
-Per-patient prediction JSON format:
-  [
-    {
-      "pid":          "109889",
-      "true_label":   "NONVITUMOR",
-      "pred_label":   "VITUMOR",
-      "patient_score": 0.507,
-      "n_slides":      3
-    },
-    ...
-  ]
+  python starter_code/train_eval.py
+  python starter_code/train_eval.py --folds 0 --n_seeds 2 --epochs 30
 """
 
 import os
 import sys
 import json
+import copy
 import argparse
 from pathlib import Path
+from collections import defaultdict
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score, log_loss
+from tqdm.auto import tqdm
 
-# Import everything we need from model.py.
-# sys.path.insert ensures Python finds model.py even if train_eval.py is called
-# from a different working directory.
 sys.path.insert(0, str(Path(__file__).parent))
-from model import (build_model, get_dataloader,
-                    LABEL_MAP, IDX_TO_LABEL, NUM_CLASSES, FEATURE_DIM)
+from model import (
+    build_model, build_model_from_config,
+    get_patient_dataloader, PatientBagDataset,
+    ACMILEnsemble,
+    LABEL_MAP, IDX_TO_LABEL, NUM_CLASSES, FEATURE_DIM,
+)
 
 
 # =============================================================================
-# SECTION 1: TRAINING
+# SECTION 1: LOSS
 # =============================================================================
 
-def train_one_epoch(model: nn.Module,
-                    loader,
-                    optimizer: torch.optim.Optimizer,
-                    criterion: nn.Module,
-                    device: torch.device) -> float:
+def patient_max_bce_loss(slide_probs_list, patient_label,
+                         label_smoothing=0.0, pos_weight=1.0, eps=1e-7):
     """
-    Run one full pass over the training set and return the average loss.
-
-    How the MIL training loop works
-    --------------------------------
-    Each item from the DataLoader is a (features_list, labels) pair where:
-      - features_list : Python list of tensors, each shape (N_i, feat_dim).
-                        N_i (the number of patches) differs per slide.
-      - labels        : torch.LongTensor of shape (batch_size,) — one label
-                        per slide in this mini-batch.
-
-    With batch_size=1 (default), features_list always has exactly 1 element.
-    We sum the loss across all slides in the mini-batch, average it, then
-    call backward() once so that the gradient step covers the whole batch.
-
-    Parameters
-    ----------
-    model     : MILClassifier in train mode
-    loader    : DataLoader built with mil_collate_fn
-    optimizer : Adam optimizer
-    criterion : CrossEntropyLoss
-    device    : CPU or CUDA GPU
-
-    Returns
-    -------
-    avg_loss : average cross-entropy loss over all slides in this epoch
+    slide_probs_list : list of scalar tensors, each = P(VITUMOR) for one slide
+    patient_label    : int (0 or 1)
+    pos_weight       : multiplier on the positive-class term (>1 upweights VITUMOR)
     """
+    max_p = torch.stack(slide_probs_list).max()
+    max_p = max_p.clamp(min=eps, max=1.0 - eps)
+    y = float(patient_label)
+    # Label smoothing: 0 -> smoothing, 1 -> 1 - smoothing
+    y_smooth = y * (1.0 - 2.0 * label_smoothing) + label_smoothing
+    loss = -(pos_weight * y_smooth * torch.log(max_p)
+             + (1.0 - y_smooth) * torch.log(1.0 - max_p))
+    return loss
+
+
+def attention_neg_entropy(attentions):
+    """Sum of negative entropies (smaller = more spread). Minimize to maximize entropy."""
+    total = 0.0
+    n = 0
+    for a in attentions:
+        a = a.clamp(min=1e-8)
+        total = total + (a * torch.log(a)).sum()
+        n += 1
+    if n == 0:
+        return torch.tensor(0.0)
+    return total / n
+
+
+# =============================================================================
+# SECTION 2: TRAIN / EVAL LOOPS
+# =============================================================================
+
+def train_one_epoch(model, loader, optimizer, device, args, epoch_desc="train"):
     model.train()
     total_loss = 0.0
-    n_slides = 0
+    n_patients = 0
 
-    for features_list, labels in loader:
+    pbar = tqdm(loader, desc=epoch_desc, leave=False,
+                dynamic_ncols=True, unit="pt")
+    for patient_batch in pbar:
+        patient = patient_batch[0]
         optimizer.zero_grad()
 
-        # Accumulate the loss for every slide in this mini-batch.
-        # We use a scalar tensor (not a Python float) so that backward()
-        # can traverse the full computation graph.
-        batch_loss = torch.tensor(0.0, device=device, requires_grad=False)
+        slide_probs_list   = []
+        branch_ce_losses   = []
+        entropy_losses     = []
 
-        for features, label in zip(features_list, labels):
-            features = features.to(device)          # (N_i, feat_dim)
-            label_t = label.unsqueeze(0).to(device) # (1,) — CrossEntropyLoss expects (B,)
+        label_t = torch.tensor([patient["patient_label"]],
+                               dtype=torch.long, device=device)
 
-            # Forward pass: get logits (second return value is None for mean pooling).
-            logits, _ = model(features)  # logits: (1, 3)
+        for slide in patient["slides"]:
+            features = slide["features"].to(device)
+            coords   = slide["coords"].to(device)
 
-            # Cross-entropy loss: compares logits against the true class index.
-            # Internally, it applies log-softmax + NLL, so we don't need to
-            # call softmax ourselves.
-            loss = criterion(logits, label_t)
-            batch_loss = batch_loss + loss
+            _, aux = model(features, coords)
 
-        # Average over slides in the batch before the backward pass.
-        # (With batch_size=1 this is a no-op, but it's correct for larger batches.)
-        batch_loss = batch_loss / len(features_list)
-        batch_loss.backward()
+            # Patient-max BCE uses raw (pre-temperature) softmax probs
+            raw_logits = aux["raw_mean_logits"]               # (1, 2)
+            p_vi = torch.softmax(raw_logits, dim=-1)[0, 1]    # scalar
+            slide_probs_list.append(p_vi)
+
+            # Branch-wise CE aux
+            branch_logits = aux["branch_logits"]              # (M, 1, 2)
+            for b in range(branch_logits.shape[0]):
+                branch_ce_losses.append(
+                    F.cross_entropy(branch_logits[b], label_t,
+                                    label_smoothing=args.label_smoothing)
+                )
+
+            # Attention entropy aux (minimize neg-entropy = maximize entropy)
+            entropy_losses.append(attention_neg_entropy(aux["branch_attentions"]))
+
+        loss_main    = patient_max_bce_loss(slide_probs_list,
+                                            patient["patient_label"],
+                                            label_smoothing=args.label_smoothing,
+                                            pos_weight=args._pos_weight)
+        loss_branch  = (torch.stack(branch_ce_losses).mean()
+                        if branch_ce_losses else torch.tensor(0.0, device=device))
+        loss_entropy = (torch.stack(entropy_losses).mean()
+                        if entropy_losses else torch.tensor(0.0, device=device))
+
+        loss = (loss_main
+                + args.branch_ce_weight * loss_branch
+                + args.entropy_weight   * loss_entropy)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        total_loss += batch_loss.item() * len(features_list)
-        n_slides   += len(features_list)
+        total_loss += loss.item()
+        n_patients += 1
+        pbar.set_postfix(loss=f"{total_loss / n_patients:.4f}")
 
-    return total_loss / max(n_slides, 1)
+    pbar.close()
+    return total_loss / max(n_patients, 1)
 
 
-# =============================================================================
-# SECTION 2: EVALUATION
-# =============================================================================
-
-def evaluate(model: nn.Module,
-             loader,
-             device: torch.device) -> dict:
+@torch.no_grad()
+def evaluate_patient_level(model, loader, device, use_temperature=True, clip_eps=0.02,
+                           desc="eval"):
     """
-    Run inference on every slide in the loader and compute per-slide metrics.
-
-    We collect the softmax probability vector for each slide, then compute:
-      - Log loss (cross-entropy): measures how well the predicted probabilities
-        match the true labels. Penalises confident wrong predictions heavily.
-        sklearn.metrics.log_loss uses base-e logarithm, averaged over slides.
-        We pass labels=[0,1] explicitly so that the function does not raise
-        an error when only one class appears in a small test fold.
-      - AUC (binary): area under the ROC curve for the binary NONVITUMOR/VITUMOR
-        task, using P(VITUMOR) as the score. Returns NaN if both classes are not
-        present in the test fold.
-
-    Note for participants:
-      The primary question is VITUMOR vs. NONVITUMOR. NONTUMOR slides (normal lung
-      tissue) have features extracted and can be used creatively — for example, to
-      help the model learn what tumor vs. non-tumor tissue looks like. If you use
-      NONTUMOR slides in your model, update NUM_CLASSES and LABEL_MAP in model.py
-      and replace the binary AUC below with a multi-class version.
-
-    Parameters
-    ----------
-    model  : MILClassifier in eval mode (set internally)
-    loader : DataLoader built with mil_collate_fn (shuffle=False for eval)
-    device : CPU or CUDA GPU
-
     Returns
     -------
-    metrics : dict with keys:
-        "log_loss"  : float — per-slide cross-entropy on the test-set probabilities
-        "auc"       : float — per-slide binary AUC (NaN if only one class present)
-        "probs"     : torch.Tensor (N_slides, 2) — softmax probabilities
-        "preds"     : torch.Tensor (N_slides,)   — predicted class indices
-        "labels"    : torch.Tensor (N_slides,)   — true class indices
-        "pids"      : list[str]  — patient ID for each slide (same order as loader)
-        "filenames" : list[str]  — slide filename for each slide
+    metrics : dict with keys
+        "log_loss" (float),
+        "auc"      (float or nan),
+        "patient_probs"  (list of float — max P(VI) per patient),
+        "patient_labels" (list of int),
+        "patient_pids"   (list of str),
     """
     model.eval()
+    patient_probs = []
+    patient_labels = []
+    patient_pids = []
 
-    all_probs  = []
-    all_preds  = []
-    all_labels = []
+    T = (model.temperature.clamp(min=1e-3) if use_temperature
+         else torch.tensor(1.0, device=device))
 
-    with torch.no_grad():
-        for features_list, labels in loader:
-            for features, label in zip(features_list, labels):
-                features = features.to(device)
+    for patient_batch in tqdm(loader, desc=desc, leave=False,
+                              dynamic_ncols=True, unit="pt"):
+        patient = patient_batch[0]
+        probs_this_patient = []
+        for slide in patient["slides"]:
+            features = slide["features"].to(device)
+            coords   = slide["coords"].to(device)
+            _, aux = model(features, coords)
+            raw_logits = aux["raw_mean_logits"]
+            p = torch.softmax(raw_logits / T, dim=-1)[0, 1].item()
+            probs_this_patient.append(p)
+        max_p = max(probs_this_patient) if probs_this_patient else 0.5
+        # Apply probability clipping to match the inference-time guarantee
+        max_p = float(np.clip(max_p, clip_eps, 1.0 - clip_eps))
+        patient_probs.append(max_p)
+        patient_labels.append(patient["patient_label"])
+        patient_pids.append(patient["pid"])
 
-                # Forward pass — we only need the logits for evaluation
-                logits, _ = model(features)  # (1, 2)
+    probs_arr  = np.array(patient_probs)
+    labels_arr = np.array(patient_labels)
+    probs_2d   = np.stack([1.0 - probs_arr, probs_arr], axis=1)
 
-                # Convert logits to probabilities with softmax
-                probs = torch.softmax(logits, dim=-1).cpu()  # (1, 2)
-                pred  = logits.argmax(dim=-1).cpu()          # (1,)
-
-                all_probs.append(probs)
-                all_preds.append(pred)
-                all_labels.append(label.item())
-
-    # Stack results into matrices for metric computation
-    all_probs  = torch.cat(all_probs, dim=0)            # (N_slides, 2)
-    all_preds  = torch.cat(all_preds, dim=0)            # (N_slides,)
-    all_labels = torch.tensor(all_labels, dtype=torch.long)  # (N_slides,)
-
-    # Patient IDs and filenames — loader.dataset.samples is in the same order
-    # as the loader iterates (shuffle=False), so index i in all_probs corresponds
-    # to sample i in samples.
-    pids      = [s["pid"]      for s in loader.dataset.samples]
-    filenames = [s["filename"] for s in loader.dataset.samples]
-
-    # --- Log loss ---
-    # We pass labels=[0, 1] so that the function does not raise an error when
-    # a test fold contains only one distinct class.
-    logloss = log_loss(
-        all_labels.numpy(),
-        all_probs.numpy(),
-        labels=list(range(NUM_CLASSES)),
-    )
-
-    # --- Binary AUC ---
-    # Use P(VITUMOR) = all_probs[:, 1] as the decision score.
-    # roc_auc_score requires both classes to appear in the true labels.
-    n_unique = len(torch.unique(all_labels))
-    if n_unique == 2:
-        auc = roc_auc_score(
-            all_labels.numpy(),
-            all_probs[:, 1].numpy(),  # P(VITUMOR) as the positive-class score
-        )
+    ll = log_loss(labels_arr, probs_2d, labels=[0, 1])
+    if len(np.unique(labels_arr)) == 2:
+        auc = roc_auc_score(labels_arr, probs_arr)
     else:
         auc = float("nan")
-        print(f"    [evaluate] WARNING: only {n_unique}/2 classes "
-              f"present in this split — AUC set to NaN.")
 
     return {
-        "log_loss":  logloss,
-        "auc":       auc,
-        "probs":     all_probs,
-        "preds":     all_preds,
-        "labels":    all_labels,
-        "pids":      pids,
-        "filenames": filenames,
-    }
-
-
-def aggregate_patient_predictions(pids: list,
-                                   probs: torch.Tensor,
-                                   true_labels: torch.Tensor) -> dict:
-    """
-    Aggregate per-slide predictions to the patient level.
-
-    Why patient-level evaluation?
-    ------------------------------
-    The clinical question is whether a patient has vascular invasion, not
-    whether a single slide does. A patient may have multiple slides; the
-    baseline aggregation rule is:
-
-      A patient is predicted VITUMOR if at least one of their slides is
-      predicted VITUMOR (argmax == 1).
-
-    For continuous metrics like AUC, we need a single score per patient
-    rather than a binary decision. We use max(P(VITUMOR)) across all slides
-    as the patient score — a high max value means the model found at least
-    one slide strongly suggesting vascular invasion, which mirrors the
-    "at least one" binary rule.
-
-    Threshold note:
-      The argmax threshold of 0.5 (i.e., pred = 1 if P(VITUMOR) > 0.5) is
-      the natural default for cross-entropy–trained models. If your model is
-      miscalibrated or the classes are imbalanced, you may find a different
-      threshold gives better patient-level accuracy — this is worth exploring.
-
-    Parameters
-    ----------
-    pids        : list of patient IDs (one per slide, same order as probs/labels)
-    probs       : torch.Tensor (N_slides, 2) — per-slide softmax probabilities
-    true_labels : torch.Tensor (N_slides,)   — per-slide true class indices
-
-    Returns
-    -------
-    dict with keys:
-        "patient_auc"      : float — binary AUC using max P(VITUMOR) per patient
-        "patient_accuracy" : float — fraction of patients correctly classified
-        "patient_log_loss" : float — log loss using max P(VITUMOR) per patient
-        "patient_pids"     : list[str] — one entry per patient (sorted)
-        "patient_labels"   : list[int] — true label per patient (0 or 1)
-        "patient_scores"   : list[float] — max P(VITUMOR) per patient
-        "patient_preds"    : list[int]   — predicted label per patient (0 or 1)
-    """
-    from collections import defaultdict
-
-    # Group slide probs and labels by patient ID.
-    # All slides from the same patient share the same true label.
-    pid_to_probs  = defaultdict(list)
-    pid_to_label  = {}
-    for pid, prob, label in zip(pids, probs, true_labels.tolist()):
-        pid_to_probs[pid].append(prob)
-        pid_to_label[pid] = int(label)
-
-    patient_pids   = sorted(pid_to_probs.keys())
-    patient_scores = []   # max P(VITUMOR) — continuous score for AUC
-    patient_preds  = []   # 1 if max P(VITUMOR) >= 0.5, else 0
-    patient_labels = []
-
-    for pid in patient_pids:
-        slide_probs   = torch.stack(pid_to_probs[pid])  # (n_slides, 2)
-        vitumor_probs = slide_probs[:, 1]               # P(VITUMOR) per slide
-        max_score     = vitumor_probs.max().item()
-        pred          = 1 if max_score >= 0.5 else 0
-        patient_scores.append(max_score)
-        patient_preds.append(pred)
-        patient_labels.append(pid_to_label[pid])
-
-    labels_arr = np.array(patient_labels)
-    scores_arr = np.array(patient_scores)
-    preds_arr  = np.array(patient_preds)
-
-    # Binary AUC using the continuous max-score
-    if len(np.unique(labels_arr)) == 2:
-        patient_auc = roc_auc_score(labels_arr, scores_arr)
-    else:
-        patient_auc = float("nan")
-        print("    [aggregate_patient_predictions] WARNING: only one patient "
-              "class present in this fold — patient AUC set to NaN.")
-
-    patient_acc = float((labels_arr == preds_arr).mean())
-
-    # Log loss: construct a 2-column probability matrix from the scalar scores
-    patient_ll = log_loss(
-        labels_arr,
-        np.stack([1 - scores_arr, scores_arr], axis=1),
-        labels=[0, 1],
-    )
-
-    return {
-        "patient_auc":      patient_auc,
-        "patient_accuracy": patient_acc,
-        "patient_log_loss": patient_ll,
-        "patient_pids":     patient_pids,
-        "patient_labels":   patient_labels,
-        "patient_scores":   patient_scores,
-        "patient_preds":    patient_preds,
+        "log_loss":       ll,
+        "auc":            auc,
+        "patient_probs":  patient_probs,
+        "patient_labels": patient_labels,
+        "patient_pids":   patient_pids,
     }
 
 
 # =============================================================================
-# SECTION 3: SINGLE-FOLD RUNNER
+# SECTION 3: TEMPERATURE SCALING
 # =============================================================================
 
-def run_fold(fold_idx: int,
-             fold_data: dict,
-             args: argparse.Namespace,
-             device: torch.device):
+@torch.no_grad()
+def _collect_val_patient_logits(model, loader, device):
+    """Cache raw logits per val patient so temperature fitting is cheap."""
+    model.eval()
+    cache = []
+    for patient_batch in tqdm(loader, desc="cache val logits", leave=False,
+                              dynamic_ncols=True, unit="pt"):
+        patient = patient_batch[0]
+        raw_list = []
+        for slide in patient["slides"]:
+            features = slide["features"].to(device)
+            coords   = slide["coords"].to(device)
+            _, aux = model(features, coords)
+            raw_list.append(aux["raw_mean_logits"].squeeze(0).detach())  # (2,)
+        cache.append({
+            "raw_logits":    torch.stack(raw_list),         # (n_slides, 2)
+            "patient_label": patient["patient_label"],
+        })
+    return cache
+
+
+def fit_temperature(model, val_loader, device, max_iter: int = 100, eps: float = 1e-7):
     """
-    Train and evaluate the model on a single cross-validation fold.
-
-    Steps:
-      1. Build DataLoaders for train and test sets from this fold's records.
-      2. Instantiate a fresh model and Adam optimizer.
-      3. Train for args.epochs epochs; print test metrics every args.eval_every epochs.
-      4. Load the checkpoint with the best (lowest) training loss.
-      5. Run final evaluation: print log loss and AUC.
-      6. Save the best checkpoint to args.save_dir/fold_{fold_idx}.pth.
-
-    Parameters
-    ----------
-    fold_idx  : fold number (0–4)
-    fold_data : dict with "train" and "test" keys, each a list of slide records
-    args      : parsed command-line arguments
-    device    : CPU or CUDA GPU
-
-    Returns
-    -------
-    dict with fold summary metrics, or None if the fold's dataset is empty.
+    Fit a single scalar temperature T on the val set to minimize
+    per-patient log loss under the max-aggregation rule. The fitted T is
+    written back to model.temperature.
     """
-    train_records = fold_data["train"]
-    test_records  = fold_data["test"]
+    print("  Fitting temperature on val...")
+    cache = _collect_val_patient_logits(model, val_loader, device)
+    if len(cache) == 0:
+        print("    [fit_temperature] empty val set — skipping.")
+        return
 
-    print(f"\n{'='*60}")
-    print(f"FOLD {fold_idx}  —  "
-          f"{len(train_records)} train slides / {len(test_records)} test slides")
-    print(f"{'='*60}")
+    T = nn.Parameter(torch.ones(1, device=device))
+    optimizer = torch.optim.LBFGS([T], lr=0.1, max_iter=max_iter,
+                                  line_search_fn="strong_wolfe")
 
-    # --- Build DataLoaders ---
-    print("\n[Data loading]")
-    train_loader = get_dataloader(
-        train_records,
-        features_dir=args.features_dir,
-        batch_size=args.batch_size,
-        shuffle=True,    # shuffle training order every epoch
-    )
-    test_loader = get_dataloader(
-        test_records,
-        features_dir=args.features_dir,
-        batch_size=1,    # one slide at a time for evaluation
-        shuffle=False,   # keep order for reproducibility
-    )
+    def closure():
+        optimizer.zero_grad()
+        losses = []
+        for item in cache:
+            raw = item["raw_logits"]                                # (n, 2)
+            scaled = raw / T.clamp(min=1e-3)
+            p_vi = torch.softmax(scaled, dim=-1)[:, 1]              # (n,)
+            max_p = p_vi.max().clamp(min=eps, max=1.0 - eps)
+            y = float(item["patient_label"])
+            loss = -(y * torch.log(max_p) + (1.0 - y) * torch.log(1.0 - max_p))
+            losses.append(loss)
+        loss = torch.stack(losses).mean()
+        loss.backward()
+        return loss
 
-    # Abort gracefully if features haven't been extracted yet
-    if len(train_loader.dataset) == 0 or len(test_loader.dataset) == 0:
-        print("  ERROR: train or test dataset is empty. "
-              "Did preprocess.py finish extracting features?")
+    try:
+        optimizer.step(closure)
+    except Exception as e:
+        print(f"    [fit_temperature] LBFGS failed ({e}); keeping T=1.0")
+        return
+
+    fitted = float(T.detach().clamp(min=1e-3).item())
+    model.temperature.data = torch.tensor([fitted], device=device)
+    print(f"    Fitted temperature T = {fitted:.4f}")
+
+
+# =============================================================================
+# SECTION 4: SINGLE-SEED TRAINING ROUTINE
+# =============================================================================
+
+def set_seed(seed: int):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _resolve_pos_weight(args, fold_data):
+    """Compute pos_weight from the fold's training set if --pos_weight auto."""
+    if isinstance(args.pos_weight, str) and args.pos_weight.lower() == "auto":
+        # Count patient-level labels in train split
+        pids_seen = {}
+        for s in fold_data["train"]:
+            pids_seen.setdefault(s["pid"], []).append(s["vi_label"])
+        n_pos = sum(1 for lbls in pids_seen.values() if "VITUMOR" in lbls)
+        n_neg = sum(1 for lbls in pids_seen.values() if "VITUMOR" not in lbls)
+        if n_pos == 0:
+            return 1.0
+        return float(n_neg) / float(n_pos)
+    return float(args.pos_weight)
+
+
+def train_one_seed(fold_data, seed, args, device):
+    print(f"\n  ---- Seed {seed} ----")
+    set_seed(seed)
+
+    # Resolve and stash pos_weight for this fold's train set
+    args._pos_weight = _resolve_pos_weight(args, fold_data)
+    print(f"    pos_weight = {args._pos_weight:.3f}")
+
+    train_loader = get_patient_dataloader(
+        fold_data["train"], args.features_dir, shuffle=True,
+        num_workers=args.num_workers)
+    val_loader = get_patient_dataloader(
+        fold_data["val"], args.features_dir, shuffle=False,
+        num_workers=max(1, args.num_workers // 2))
+
+    if len(train_loader.dataset) == 0 or len(val_loader.dataset) == 0:
+        print("  ERROR: empty train or val dataset.")
         return None
 
-    # --- Model, optimizer, loss ---
-    # A fresh model is created for every fold so they don't share weights.
-    model = build_model(hidden_dim=args.hidden_dim, dropout=args.dropout).to(device)
+    model = build_model(
+        hidden_dim=args.hidden_dim,
+        dropout=args.dropout,
+        n_branches=args.n_branches,
+        top_k=args.top_k,
+        mask_prob=args.mask_prob,
+        use_pe=args.use_pe,
+        pe_dim=args.pe_dim,
+        clip_eps=args.clip_eps,
+    ).to(device)
 
-    # Adam optimizer: a good default for MIL models.
-    #   lr          — step size. 1e-4 works well for most MIL setups.
-    #   weight_decay — L2 penalty on weights; helps prevent overfitting on
-    #                  small datasets like ours (~100 training slides).
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-    )
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=args.lr * 0.01)
 
-    # Cross-entropy loss: standard choice for multi-class classification.
-    # If you observe one class dominating predictions (e.g., the model always
-    # predicts VITUMOR), consider adding class weights here:
-    #   counts = [n_VITUMOR, n_NONVITUMOR, n_NONTUMOR]  (training slides)
-    #   weights = 1 / torch.tensor(counts, dtype=torch.float)
-    #   criterion = nn.CrossEntropyLoss(weight=weights.to(device))
-    criterion = nn.CrossEntropyLoss()
+    best_val = float("inf")
+    best_state = None
+    patience = args.patience
+    patience_left = patience
 
-    # --- Training loop ---
-    print(f"\n[Training]  epochs={args.epochs}  lr={args.lr}  "
-          f"weight_decay={args.weight_decay}  batch_size={args.batch_size}")
-    print(f"  (printing test metrics every {args.eval_every} epochs)")
+    epoch_bar = tqdm(range(1, args.epochs + 1),
+                     desc=f"seed {seed}",
+                     dynamic_ncols=True, unit="ep")
+    for epoch in epoch_bar:
+        train_loss = train_one_epoch(
+            model, train_loader, optimizer, device, args,
+            epoch_desc=f"  train ep{epoch:3d}")
+        scheduler.step()
 
-    best_train_loss   = float("inf")
-    best_model_state  = None  # will hold a CPU copy of the best weights
+        val_metrics = evaluate_patient_level(
+            model, val_loader, device,
+            use_temperature=False, clip_eps=args.clip_eps,
+            desc=f"  val   ep{epoch:3d}")
+        val_ll = val_metrics["log_loss"]
+        val_auc = val_metrics["auc"]
 
-    for epoch in range(1, args.epochs + 1):
-        # --- One training pass ---
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-
-        # --- Periodic evaluation ---
-        # Evaluating every epoch adds overhead (each test pass processes all
-        # test slides). We only do it every eval_every epochs and at the end.
-        if epoch % args.eval_every == 0 or epoch == args.epochs:
-            metrics = evaluate(model, test_loader, device)
-            auc_str = f"{metrics['auc']:.4f}" if not np.isnan(metrics['auc']) else " n/a "
-            print(f"  Epoch {epoch:3d}/{args.epochs}  "
-                  f"train_loss={train_loss:.4f}  "
-                  f"test_logloss={metrics['log_loss']:.4f}  "
-                  f"test_auc={auc_str}")
+        improved = val_ll < best_val - 1e-5
+        if improved:
+            best_val = val_ll
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            patience_left = patience
         else:
-            print(f"  Epoch {epoch:3d}/{args.epochs}  train_loss={train_loss:.4f}")
+            patience_left -= 1
 
-        # Track the best model by training loss.
-        # We save a CPU copy of the weights — this is memory-efficient and
-        # lets us reload the best state at the end regardless of device.
-        if train_loss < best_train_loss:
-            best_train_loss  = train_loss
-            best_model_state = {k: v.detach().cpu().clone()
-                                for k, v in model.state_dict().items()}
+        auc_str = f"{val_auc:.3f}" if not np.isnan(val_auc) else "n/a"
+        epoch_bar.set_postfix(
+            train=f"{train_loss:.4f}",
+            val=f"{val_ll:.4f}",
+            best=f"{best_val:.4f}",
+            auc=auc_str,
+            pat=f"{patience_left}/{patience}",
+            star="*" if improved else " ",
+        )
 
-    # --- Final evaluation with best weights ---
-    print(f"\n[Evaluation]  Loading best checkpoint (train_loss={best_train_loss:.4f})")
-    model.load_state_dict(best_model_state)
-    final = evaluate(model, test_loader, device)
+        if patience_left <= 0:
+            epoch_bar.write(
+                f"    Early stopping at epoch {epoch} (best val_ll={best_val:.4f})")
+            break
+    epoch_bar.close()
 
-    # Patient-level aggregation
-    patient = aggregate_patient_predictions(
-        final["pids"], final["probs"], final["labels"])
+    if best_state is None:
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
-    # Per-slide summary
-    auc_str = f"{final['auc']:.4f}" if not np.isnan(final['auc']) else "n/a"
-    print(f"\n  [Per-slide]")
-    print(f"    Log loss : {final['log_loss']:.4f}")
-    print(f"    AUC      : {auc_str}")
+    # Reload best and fit temperature on val
+    model.load_state_dict(best_state)
+    fit_temperature(model, val_loader, device, max_iter=args.temp_max_iter)
 
-    # Per-patient summary
-    p_auc_str = f"{patient['patient_auc']:.4f}" if not np.isnan(patient['patient_auc']) else "n/a"
-    print(f"\n  [Per-patient]")
-    print(f"    Log loss : {patient['patient_log_loss']:.4f}")
-    print(f"    AUC      : {p_auc_str}")
-    print(f"    Accuracy : {patient['patient_accuracy']:.4f}")
+    final_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
-    # --- Save checkpoint and predictions ---
-    if args.save_dir:
-        os.makedirs(args.save_dir, exist_ok=True)
-
-        # Save model checkpoint (includes both slide-level and patient-level metrics).
-        ckpt_path = os.path.join(args.save_dir, f"fold_{fold_idx}.pth")
-        torch.save({
-            "fold":             fold_idx,
-            "model_state_dict": best_model_state,
-            "args":             vars(args),
-            "metrics": {
-                "slide_log_loss":   final["log_loss"],
-                "slide_auc":        final["auc"],
-                "patient_log_loss": patient["patient_log_loss"],
-                "patient_auc":      patient["patient_auc"],
-                "patient_accuracy": patient["patient_accuracy"],
-            },
-        }, ckpt_path)
-        print(f"\n  Checkpoint saved → {ckpt_path}")
-        print(f"  (To reload: torch.load('{ckpt_path}')['model_state_dict'])")
-
-    # Save per-slide and per-patient predictions as JSON files.
-    if args.preds_dir:
-        os.makedirs(args.preds_dir, exist_ok=True)
-
-        # --- Per-slide predictions ---
-        # test_loader.dataset.samples lists the slides in the same order as the
-        # loader iterates them (shuffle=False), so index i in final['preds']
-        # corresponds to sample i in the dataset.
-        preds_path = os.path.join(args.preds_dir, f"fold_{fold_idx}.json")
-        probs_np = final["probs"].numpy()   # (N_slides, 2)
-        preds_np = final["preds"].numpy()   # (N_slides,)
-        samples  = test_loader.dataset.samples
-
-        pred_records = []
-        for i, sample in enumerate(samples):
-            pred_records.append({
-                "filename":   sample["filename"],
-                "pid":        sample["pid"],
-                "true_label": sample["vi_label"],
-                "pred_label": IDX_TO_LABEL[int(preds_np[i])],
-                "probs": {
-                    IDX_TO_LABEL[c]: round(float(probs_np[i, c]), 4)
-                    for c in range(NUM_CLASSES)
-                },
-            })
-
-        with open(preds_path, "w") as fout:
-            json.dump(pred_records, fout, indent=2)
-        print(f"  Per-slide predictions  saved → {preds_path}")
-
-        # --- Per-patient predictions ---
-        patient_preds_path = os.path.join(args.preds_dir, f"fold_{fold_idx}_patients.json")
-        patient_records = []
-        for pid, true_lbl, score, pred in zip(
-            patient["patient_pids"],
-            patient["patient_labels"],
-            patient["patient_scores"],
-            patient["patient_preds"],
-        ):
-            patient_records.append({
-                "pid":           pid,
-                "true_label":    IDX_TO_LABEL[true_lbl],
-                "pred_label":    IDX_TO_LABEL[pred],
-                "patient_score": round(score, 4),  # max P(VITUMOR) across slides
-                "n_slides":      len([s for s in samples if s["pid"] == pid]),
-            })
-
-        with open(patient_preds_path, "w") as fout:
-            json.dump(patient_records, fout, indent=2)
-        print(f"  Per-patient predictions saved → {patient_preds_path}")
+    # Report calibrated val metrics
+    val_metrics_cal = evaluate_patient_level(
+        model, val_loader, device,
+        use_temperature=True, clip_eps=args.clip_eps)
+    print(f"    post-calibration val_ll={val_metrics_cal['log_loss']:.4f}  "
+          f"val_auc={val_metrics_cal['auc']:.4f}")
 
     return {
-        "fold":             fold_idx,
-        "log_loss":         final["log_loss"],
-        "auc":              final["auc"],
-        "patient_log_loss": patient["patient_log_loss"],
-        "patient_auc":      patient["patient_auc"],
-        "patient_accuracy": patient["patient_accuracy"],
+        "seed":        seed,
+        "state_dict":  final_state,
+        "val_log_loss": val_metrics_cal["log_loss"],
+        "val_auc":      val_metrics_cal["auc"],
     }
 
 
 # =============================================================================
-# SECTION 4: MAIN — LOOP OVER FOLDS AND AGGREGATE
+# SECTION 5: FOLD RUNNER
 # =============================================================================
 
-def main(args: argparse.Namespace):
-    """
-    Load split files, run training+evaluation on each requested fold,
-    then print a cross-validation summary.
-    """
-    # --- Device ---
+def build_config_dict(args):
+    return {
+        "feature_dim": FEATURE_DIM,
+        "hidden_dim":  args.hidden_dim,
+        "num_classes": NUM_CLASSES,
+        "dropout":     args.dropout,
+        "n_branches":  args.n_branches,
+        "top_k":       args.top_k,
+        "mask_prob":   args.mask_prob,
+        "use_pe":      args.use_pe,
+        "pe_dim":      args.pe_dim,
+        "clip_eps":    args.clip_eps,
+    }
+
+
+def build_ensemble_from_states(state_dicts, config, device):
+    members = []
+    for state in state_dicts:
+        m = build_model_from_config(config, verbose=False).to(device)
+        m.load_state_dict(state)
+        m.eval()
+        members.append(m)
+    return ACMILEnsemble(members).to(device).eval()
+
+
+def run_fold(fold_idx, fold_data, args, device):
+    print(f"\n{'='*60}")
+    print(f"FOLD {fold_idx}  —  "
+          f"train={len(fold_data['train'])}  "
+          f"val={len(fold_data['val'])}  "
+          f"test={len(fold_data['test'])}")
+    print(f"{'='*60}")
+
+    seeds = list(range(args.base_seed, args.base_seed + args.n_seeds))
+    seed_results = []
+    seed_bar = tqdm(seeds, desc=f"fold {fold_idx} seeds",
+                    dynamic_ncols=True, unit="seed")
+    for seed in seed_bar:
+        result = train_one_seed(fold_data, seed, args, device)
+        if result is not None:
+            seed_results.append(result)
+            seed_bar.set_postfix(
+                last_val_ll=f"{result['val_log_loss']:.4f}",
+                done=f"{len(seed_results)}/{len(seeds)}",
+            )
+    seed_bar.close()
+
+    if len(seed_results) == 0:
+        print("  No seeds completed successfully.")
+        return None
+
+    # Build ensemble and evaluate on fold test
+    config = build_config_dict(args)
+    ensemble = build_ensemble_from_states(
+        [r["state_dict"] for r in seed_results], config, device)
+
+    test_loader = get_patient_dataloader(
+        fold_data["test"], args.features_dir, shuffle=False,
+        num_workers=max(1, args.num_workers // 2))
+
+    class _EnsembleInferWrap(nn.Module):
+        """Compatibility wrapper so evaluate_patient_level can use an ensemble."""
+        def __init__(self, ens):
+            super().__init__()
+            self.ens = ens
+            self.temperature = torch.ones(1, device=device)
+        def forward(self, features, coords=None):
+            logits, _ = self.ens(features, coords)
+            # Return log-probs as "raw_mean_logits" so evaluate_patient_level's
+            # softmax/temperature path still works (T=1 no-op).
+            return logits, {"raw_mean_logits": logits}
+
+    wrap = _EnsembleInferWrap(ensemble)
+    test_metrics = evaluate_patient_level(
+        wrap, test_loader, device,
+        use_temperature=False, clip_eps=args.clip_eps)
+
+    print(f"\n  [Fold {fold_idx} ensemble — per-patient test metrics]")
+    print(f"    log loss : {test_metrics['log_loss']:.4f}")
+    print(f"    AUC      : {test_metrics['auc']:.4f}")
+
+    # Save single-file ensemble checkpoint
+    if args.save_dir:
+        os.makedirs(args.save_dir, exist_ok=True)
+        ckpt_path = os.path.join(args.save_dir, f"fold_{fold_idx}_ensemble.pth")
+        torch.save({
+            "fold":         fold_idx,
+            "seeds":        [r["seed"] for r in seed_results],
+            "model_states": [r["state_dict"] for r in seed_results],
+            "config":       config,
+            "args":         vars(args),
+            "metrics": {
+                "test_log_loss": test_metrics["log_loss"],
+                "test_auc":      test_metrics["auc"],
+            },
+        }, ckpt_path)
+        print(f"  Ensemble checkpoint saved → {ckpt_path}")
+
+    # Save per-patient predictions
+    if args.preds_dir:
+        os.makedirs(args.preds_dir, exist_ok=True)
+        pred_records = []
+        for pid, y, p in zip(test_metrics["patient_pids"],
+                             test_metrics["patient_labels"],
+                             test_metrics["patient_probs"]):
+            pred_records.append({
+                "pid":          pid,
+                "true_label":   IDX_TO_LABEL[int(y)],
+                "patient_score": round(float(p), 6),
+                "pred_label":   IDX_TO_LABEL[1 if p >= 0.5 else 0],
+            })
+        preds_path = os.path.join(args.preds_dir, f"fold_{fold_idx}_patients.json")
+        with open(preds_path, "w") as f:
+            json.dump(pred_records, f, indent=2)
+        print(f"  Per-patient predictions saved → {preds_path}")
+
+    return {
+        "fold":         fold_idx,
+        "log_loss":     test_metrics["log_loss"],
+        "auc":          test_metrics["auc"],
+        "seed_results": seed_results,
+        "ensemble":     ensemble,
+        "config":       config,
+    }
+
+
+# =============================================================================
+# SECTION 6: MAIN
+# =============================================================================
+
+def save_super_ensemble(args, folds_results):
+    """Pool every seed from every fold into a single super-ensemble .pth."""
+    if len(folds_results) == 0 or not args.save_dir:
+        return
+
+    all_states = []
+    config = folds_results[0]["config"]
+    for fr in folds_results:
+        for sr in fr["seed_results"]:
+            all_states.append(sr["state_dict"])
+
+    print(f"\n{'='*72}")
+    print("FINAL SUPER-ENSEMBLE")
+    print(f"{'='*72}")
+    print(f"  Pooling {len(all_states)} models "
+          f"({len(folds_results)} folds × {len(folds_results[0]['seed_results'])} seeds)")
+
+    final_path = os.path.join(args.save_dir, "final_ensemble.pth")
+    torch.save({
+        "fold":         -1,
+        "seeds":        "super-ensemble-all-folds",
+        "model_states": all_states,
+        "config":       config,
+        "args":         vars(args),
+    }, final_path)
+    print(f"  Final super-ensemble saved → {final_path}")
+    print(f"  (Use this file as CHECKPOINT in predict.sh for leaderboard submission.)")
+
+
+def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
-    # --- Locate split files ---
     splits_dir = Path(args.splits_dir)
     all_fold_files = sorted(splits_dir.glob("fold_*.json"))
-
     if len(all_fold_files) == 0:
-        print(f"ERROR: No fold_*.json files found in '{splits_dir}'. "
-              f"Run preprocess.py first (or check --splits_dir).")
+        print(f"ERROR: No fold_*.json files in {splits_dir}. Run create_splits.py first.")
         return
 
-    # Optionally restrict to specific folds (e.g. --folds 0 2 4)
     if args.folds is not None:
         fold_files = [f for f in all_fold_files
                       if int(f.stem.split("_")[1]) in args.folds]
     else:
         fold_files = all_fold_files
-
     print(f"Running {len(fold_files)} fold(s): {[f.name for f in fold_files]}")
 
-    # --- Run each fold ---
     fold_results = []
-    for fold_file in fold_files:
+    fold_bar = tqdm(fold_files, desc="folds", dynamic_ncols=True, unit="fold")
+    for fold_file in fold_bar:
         fold_idx = int(fold_file.stem.split("_")[1])
         with open(fold_file) as f:
             fold_data = json.load(f)
+        if "val" not in fold_data or len(fold_data["val"]) == 0:
+            fold_bar.write(f"WARNING: fold_{fold_idx}.json has no 'val' split. "
+                           f"Re-run create_splits.py with --val_frac > 0.")
+            continue
         result = run_fold(fold_idx, fold_data, args, device)
         if result is not None:
             fold_results.append(result)
+            fold_bar.set_postfix(
+                last_ll=f"{result['log_loss']:.4f}",
+                done=f"{len(fold_results)}/{len(fold_files)}",
+            )
+    fold_bar.close()
 
-    # --- Cross-validation summary ---
     if len(fold_results) == 0:
         print("\nNo folds completed successfully.")
         return
 
+    # CV summary
     print(f"\n{'='*72}")
-    print("CROSS-VALIDATION SUMMARY")
+    print("CROSS-VALIDATION SUMMARY (per-fold ensemble, patient-level)")
     print(f"{'='*72}")
-
-    # Per-slide metrics
-    print(f"\n  [Per-slide]")
     print(f"  {'Fold':>6}  {'Log Loss':>10}  {'AUC':>8}")
     print(f"  {'-'*6}  {'-'*10}  {'-'*8}")
     for r in fold_results:
-        auc_str = f"{r['auc']:>8.4f}" if not np.isnan(r['auc']) else f"{'n/a':>8}"
-        print(f"  {r['fold']:>6d}  {r['log_loss']:>10.4f}  {auc_str}")
-    if len(fold_results) > 1:
-        lls  = [r["log_loss"] for r in fold_results]
-        aucs = [r["auc"] for r in fold_results if not np.isnan(r["auc"])]
-        print(f"  {'-'*6}  {'-'*10}  {'-'*8}")
-        print(f"  {'mean':>6}  {np.mean(lls):>10.4f}  "
-              f"{np.mean(aucs) if aucs else float('nan'):>8.4f}")
-        print(f"  {'std':>6}  {np.std(lls):>10.4f}  "
-              f"{np.std(aucs) if aucs else float('nan'):>8.4f}")
+        auc = f"{r['auc']:>8.4f}" if not np.isnan(r['auc']) else f"{'n/a':>8}"
+        print(f"  {r['fold']:>6d}  {r['log_loss']:>10.4f}  {auc}")
+    lls  = [r["log_loss"] for r in fold_results]
+    aucs = [r["auc"] for r in fold_results if not np.isnan(r["auc"])]
+    print(f"  {'-'*6}  {'-'*10}  {'-'*8}")
+    print(f"  {'mean':>6}  {np.mean(lls):>10.4f}  "
+          f"{(np.mean(aucs) if aucs else float('nan')):>8.4f}")
+    print(f"  {'std':>6}  {np.std(lls):>10.4f}  "
+          f"{(np.std(aucs) if aucs else float('nan')):>8.4f}")
 
-    # Per-patient metrics
-    print(f"\n  [Per-patient]")
-    print(f"  {'Fold':>6}  {'Log Loss':>10}  {'AUC':>8}  {'Accuracy':>10}")
-    print(f"  {'-'*6}  {'-'*10}  {'-'*8}  {'-'*10}")
-    for r in fold_results:
-        p_auc_str = f"{r['patient_auc']:>8.4f}" if not np.isnan(r['patient_auc']) else f"{'n/a':>8}"
-        print(f"  {r['fold']:>6d}  {r['patient_log_loss']:>10.4f}  "
-              f"{p_auc_str}  {r['patient_accuracy']:>10.4f}")
-    if len(fold_results) > 1:
-        p_lls  = [r["patient_log_loss"] for r in fold_results]
-        p_aucs = [r["patient_auc"] for r in fold_results if not np.isnan(r["patient_auc"])]
-        p_accs = [r["patient_accuracy"] for r in fold_results]
-        print(f"  {'-'*6}  {'-'*10}  {'-'*8}  {'-'*10}")
-        print(f"  {'mean':>6}  {np.mean(p_lls):>10.4f}  "
-              f"{np.mean(p_aucs) if p_aucs else float('nan'):>8.4f}  "
-              f"{np.mean(p_accs):>10.4f}")
-        print(f"  {'std':>6}  {np.std(p_lls):>10.4f}  "
-              f"{np.std(p_aucs) if p_aucs else float('nan'):>8.4f}  "
-              f"{np.std(p_accs):>10.4f}")
+    # Save final super-ensemble across all folds × seeds
+    save_super_ensemble(args, fold_results)
 
     print(f"\nDone. Checkpoints saved to: {args.save_dir}")
     if args.preds_dir:
@@ -693,120 +636,67 @@ def main(args: argparse.Namespace):
 
 
 # =============================================================================
-# SECTION 5: ARGUMENT PARSING AND ENTRY POINT
+# SECTION 7: ARGS
 # =============================================================================
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train and evaluate the mean-pooling MIL model for VI-LUAD",
+        description="Train and evaluate ACMIL for VI-LUAD",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # --- Paths ---
-    path_group = parser.add_argument_group("Paths")
-    path_group.add_argument(
-        "--features_dir",
-        type=str,
-        default=os.path.join(os.path.dirname(__file__), "features"),
-        help="Directory containing <slide>.pt feature files (from preprocess.py)",
-    )
-    path_group.add_argument(
-        "--splits_dir",
-        type=str,
-        default=os.path.join(os.path.dirname(__file__), "splits"),
-        help="Directory containing fold_0.json … fold_4.json (from preprocess.py)",
-    )
-    path_group.add_argument(
-        "--save_dir",
-        type=str,
-        default=os.path.join(os.path.dirname(__file__), "checkpoints"),
-        help="Directory to save model checkpoints (one .pth file per fold)",
-    )
-    path_group.add_argument(
-        "--preds_dir",
-        type=str,
-        default=os.path.join(os.path.dirname(__file__), "predictions"),
-        help="Directory to save per-slide prediction JSON files (one per fold). "
-             "Set to empty string to skip saving predictions.",
-    )
+    # Paths
+    parser.add_argument("--features_dir", type=str,
+                        default="/projectnb/medaihack/VI_LUAD_Project/WSI_Data/processed",
+                        help="Directory with per-slide .pt feature files.")
+    parser.add_argument("--splits_dir",   type=str,
+                        default=os.path.join(os.path.dirname(__file__), "splits"))
+    parser.add_argument("--save_dir",     type=str,
+                        default=os.path.join(os.path.dirname(__file__), "checkpoints"))
+    parser.add_argument("--preds_dir",    type=str,
+                        default=os.path.join(os.path.dirname(__file__), "predictions"))
 
-    # --- Training hyperparameters ---
-    train_group = parser.add_argument_group("Training")
-    train_group.add_argument(
-        "--epochs",
-        type=int,
-        default=20,
-        help="Number of training epochs per fold",
-    )
-    train_group.add_argument(
-        "--lr",
-        type=float,
-        default=1e-4,
-        help="Adam learning rate",
-    )
-    train_group.add_argument(
-        "--weight_decay",
-        type=float,
-        default=1e-4,
-        help="Adam weight decay (L2 regularization coefficient)",
-    )
-    train_group.add_argument(
-        "--batch_size",
-        type=int,
-        default=1,
-        help="Slides per gradient step. 1 is recommended for MIL with variable bag sizes.",
-    )
+    # Training
+    parser.add_argument("--epochs",       type=int, default=50)
+    parser.add_argument("--patience",     type=int, default=10,
+                        help="Early-stopping patience (epochs without val improvement).")
+    parser.add_argument("--lr",           type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--label_smoothing", type=float, default=0.05)
+    parser.add_argument("--pos_weight",   type=str,   default="1.0",
+                        help="Multiplier on positive-class (VITUMOR) term in BCE. "
+                             "Pass a float (e.g. 1.58) or 'auto' to use n_neg/n_pos "
+                             "from each fold's train patients.")
+    parser.add_argument("--branch_ce_weight", type=float, default=0.5)
+    parser.add_argument("--entropy_weight",   type=float, default=0.01)
+    parser.add_argument("--temp_max_iter",    type=int,   default=100)
 
-    # --- Model hyperparameters ---
-    model_group = parser.add_argument_group("Model")
-    model_group.add_argument(
-        "--hidden_dim",
-        type=int,
-        default=256,
-        help="Hidden layer size for the MLP head",
-    )
-    model_group.add_argument(
-        "--dropout",
-        type=float,
-        default=0.25,
-        help="Dropout probability in the MLP classification head",
-    )
+    # Model
+    parser.add_argument("--hidden_dim",   type=int,   default=512)
+    parser.add_argument("--dropout",      type=float, default=0.25)
+    parser.add_argument("--n_branches",   type=int,   default=5)
+    parser.add_argument("--top_k",        type=int,   default=10)
+    parser.add_argument("--mask_prob",    type=float, default=0.6)
+    parser.add_argument("--use_pe",       type=lambda x: x.lower() != "false", default=True)
+    parser.add_argument("--pe_dim",       type=int,   default=64)
+    parser.add_argument("--clip_eps",     type=float, default=0.02)
 
-    # --- Experiment control ---
-    misc_group = parser.add_argument_group("Experiment control")
-    misc_group.add_argument(
-        "--folds",
-        type=int,
-        nargs="+",
-        default=None,
-        metavar="FOLD_IDX",
-        help="Fold indices to run (e.g. --folds 0 1). Default: run all 5 folds.",
-    )
-    misc_group.add_argument(
-        "--eval_every",
-        type=int,
-        default=5,
-        help="Print test metrics every this many epochs (also always printed at final epoch)",
-    )
-    misc_group.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducibility (affects model initialization and data shuffling)",
-    )
+    # Ensembling
+    parser.add_argument("--n_seeds",      type=int, default=5,
+                        help="Number of random seeds per fold (ensemble size).")
+    parser.add_argument("--base_seed",    type=int, default=42)
+
+    # Experiment control
+    parser.add_argument("--folds", type=int, nargs="+", default=None,
+                        metavar="FOLD_IDX")
+    parser.add_argument("--num_workers", type=int, default=4,
+                        help="DataLoader worker processes. Each preloads the "
+                             "next patient's .pt file while the GPU trains on "
+                             "the current one. Set to 0 for easy debugging.")
 
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-
-    # Set random seeds for reproducibility.
-    # Note: the seed here mainly affects model weight initialization
-    # and the order in which training slides are shuffled each epoch.
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
-
     main(args)
