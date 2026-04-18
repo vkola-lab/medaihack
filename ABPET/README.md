@@ -21,7 +21,7 @@
   <a href="https://github.com/ayiii-a">Zijiang Zhao</a> ·
   <a href="https://github.com/karthikayanidevaraj">Karthikayani Devaraj</a> ·
   Shruthi Ashok ·
-  Sathvika Mallavarapu
+  athvika Mallavarapu
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@ distribution.
 > **Val set (leaderboard, final):** MAE **11.7916 CL** — a **40.4 %** MAE reduction over the 3D CNN baseline (19.77 CL) provided by the hackathon organizers. Pearson r (internal) = 0.936.
 
 <p align="center">
-  <img src="figures/architecture/pet_resnet-v2.png" width="900" alt="PETResNet architecture"/>
+  <img src="figures/architecture/pet_resnet_film.png" width="900" alt="PETResNet architecture"/>
 </p>
 
 Our model `PETResNet` combines:
