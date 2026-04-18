@@ -1,0 +1,43 @@
+# Default training configuration for mygo_centiloid.
+#
+# Launch:
+#     python dev/train.py --config dev/config/train.yaml
+#     bash   dev/train.sh                       # same thing
+#
+# To run an experiment variant: copy this file and edit the fields you care
+# about — the config path is the full record of the run.
+
+paths:
+  train_csv: data/train.csv
+  val_csv:   data/val.csv
+  log_dir:   logs
+  checkpoint_dir: null        # null  → <run_dir>/checkpoints
+
+run:
+  name: null                  # null  → auto-stamped <UTC>_<model>_train
+  seed: 42
+
+model:
+  name: petresnet             # petresnet | petresnet_no_film
+  emb_dim:      32
+  dropout_high: 0.4
+  dropout_low:  0.2
+  freeze_tracer_norm: false   # true → γ=1, β=0, not trained (ablation)
+
+training:
+  epochs:       100
+  batch_size:   4
+  num_workers:  4
+  lr:           1.0e-4
+  weight_decay: 1.0e-4
+  clip_grad:    1.0
+  patience:     20
+
+augmentation:
+  enabled:    true
+  per_tracer: true            # STRONG for NAV/PIB when true
+
+loss:
+  name:  centiloid            # centiloid | huber | mse | mae
+  delta: 25.0                 # Huber threshold (≈ IQR of CL)
+  alpha: 0.7                  # mix: α·Huber + (1−α)·(1 − Pearson r)

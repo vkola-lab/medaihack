@@ -1,299 +1,550 @@
-# Challenge overview
+<p align="center">
+  <img src="./figures/logos/mygo_centiloid_logo.svg" alt="MYGO-Centiloid Logo" width="200" style="margin-bottom: -20px;"/>
+</p>
 
-Alzheimer's disease (AD) is the most common form of dementia and a growing global health crisis. One of its earliest hallmarks is the buildup of abnormal protein deposits in the brain called amyloid plaques, which can be detected years before symptom onset using Positron Emission Tomography (PET) imaging. The Centiloid scale provides us with a standardized measure of amyloid burden in brain amyloid PET scans, with scores near zero or negative indicating little to no amyloid, and higher scores signaling significant accumulation associated with AD risk. In this challenge, you will build computer vision models to predict Centiloid scores from already preprocessed 3D amyloid PET scans. However, these brain scans were acquired using different PET radiotracers since different hospitals and studies tend to use different imaging protocols. While all tracers are radioactive compounds that bind to amyloid plaques, each of them produces images with different intensity profiles and noise characteristics. Your models should be robust to this variation, and encoding tracer identity as part of your approach is encouraged, though not required. Participants will have access to 2,000 training samples and 500 validation samples, with final rankings determined on a held-out test set evaluated by the judges. Strong solutions may be included as contributions in a publishable research paper.
+<h1 align="center">MYGO-Centiloid</h1>
+<p align="center">
+  <b>M</b>ultitracer-conditioned 3D ResNet18 for am<b>Y</b>loid β-PET centiloid re<b>G</b>ressi<b>O</b>n
+</p>
 
-# Amyloid PET Centiloid Prediction Challenge
+<p align="center">
+   <b>1st prize</b> at the
+  <a href="https://medaihack.org/"><b>MedAI Spring 2026 Hackathon</b></a>
+  organized by the
+  <a href="https://github.com/vkola-lab/medaihack"><b>Kolachalama Lab, Boston University</b></a>.
+</p>
 
-This starter code provides a working end-to-end pipeline for the **Amyloid PET Centiloid Prediction Challenge**. You can run it as-is to obtain a baseline, then improve specific components such as the 3D CNN backbone, tracer conditioning, loss function, and training strategy. Refer to the challenge description for task background, data format, preprocessing details, and evaluation criteria.
+<p align="center">
+  <b>Team 25 — It's MYGO!!!!!!</b><br/>
+  <a href="https://github.com/JimmyToluene">Haozhe Jia</a> ·
+  <a href="https://github.com/Yujie-Jessie">Yujie Hu</a> ·
+  <a href="https://github.com/ayiii-a">Zijiang Zhao</a> ·
+  <a href="https://github.com/karthikayanidevaraj">Karthikayani Devaraj</a> ·
+  Shruthi Ashok ·
+  Sathvika Mallavarapu
+</p>
 
-**Evaluation:** Your model will be evaluated on the validation set using **Mean Absolute Error (MAE)** in centiloid units as the primary metric, with **Pearson correlation coefficient** as the secondary metric. Since the task is continuous centiloid prediction from preprocessed 3D PET volumes, this pipeline is designed as a **regression** framework rather than classification.
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python"/></a>
+  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.8-ee4c2c.svg" alt="PyTorch"/></a>
+  <a href="https://medaihack.org/"><img src="https://img.shields.io/badge/MedAI%20Spring%202026-1st%20place-gold.svg" alt="1st place"/></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/></a>
+</p>
 
-## Overview
+---
+We predict continuous Centiloid scores from preprocessed 3D amyloid β-PET
+volumes (`(1, 128, 128, 128)`, four tracers: **FBP**, **FBB**, **NAV**, **PIB**),
+trained on the MedAI Spring 2026 Hackathon data (2,000 train + 500 val,
+NACC + A4 cohorts). 
 
-Predict **centiloid scores** from preprocessed 3D amyloid PET brain scans. Centiloid is a standardized quantitative measure of amyloid-beta plaque burden in the brain and is a key biomarker for Alzheimer's disease. Higher centiloid values indicate greater amyloid deposition.
+The pipeline is specifically designed to handle the
+extreme right-skew and 64.8 % negative-class imbalance in the Centiloid
+distribution.
 
-**Task:** Given a preprocessed 3D PET volume and the radiotracer used, predict the continuous centiloid score.
+> **Val set (leaderboard, final):** MAE **11.7916 CL** — a **40.4 %** MAE reduction over the 3D CNN baseline (19.77 CL) provided by the hackathon organizers. Pearson r (internal) = 0.936.
 
-## Clone GitHub repository
+<p align="center">
+  <img src="figures/architecture/pet_resnet-v2.png" width="900" alt="PETResNet architecture"/>
+</p>
 
+Our model `PETResNet` combines:
+- **3D ResNet-18** backbone with **FiLM** conditioning at every residual stage;
+- **TracerNorm** — per-tracer learned (γ, β) intensity rescale at the input;
+- **Tracer embedding** concatenated into our 3-layer regression head;
+- **Huber + Pearson** combined loss trained with an inverse-frequency
+  `WeightedRandomSampler` over six Centiloid bins.
+
+> We motivated every design decision with an empirical finding, documented in [`eda/`](eda/README.md) and recorded in each script's `Justifies:` header.
+
+---
+
+## Contents
+
+1. [Results](#results)
+2. [Ongoing Work](#ongoing-work) → [`ablations/`](ablations/README.md)
+3. [Quick start](#quick-start)
+4. [Repository Structure](#repository-structure)
+5. [Architecture](#architecture)
+6. [Data](#data)
+7. [Outputs](#outputs)
+8. [Submission & Evaluation](#submission--evaluation)
+9. [Disclaimer](#disclaimer)
+10. [License](#license)
+11. [References](#references)
+
+---
+
+## Results
+
+We compared our `PETResNet` against the unmodified starter baseline on
+the validation set (n = 500).
+
+| | 3D CNN baseline | **MYGO (ours)** |
+|---|-----------------|---|
+| **Overall MAE (leaderboard, final)** | 19.77 CL | **11.7916 CL** |
+| **Overall Pearson r (internal)** | 0.790 | **0.936** |
+
+**Improvement:** MAE 19.77 → 11.79 (−7.98 CL, **40.4 % reduction**).
+
+**Per-tracer breakdown (internal `dev/evaluate.py`):**
+
+| Tracer | N | Baseline 3D CNN MAE | **MYGO MAE** | Baseline 3D CNN r | **MYGO r** |
+| ------ | --- |---------------------| ------------ |-------------------| ---------- |
+| **ALL** | 500 | 19.77               | **11.73** | 0.790             | **0.936** |
+| FBP | 236 | 19.28               | **11.49** | 0.797             | **0.930** |
+| FBB | 114 | 20.04               | **12.37** | 0.804             | **0.933** |
+| PIB | 133 | 21.17               | **11.94** | 0.790             | **0.939** |
+| NAV | 17  | 13.86               | **9.28** | 0.946             | **0.981** |
+
+> Per-tracer rows are from our internal eval script (weighted average
+> 11.73). The **final** competition score is the leaderboard number
+> (**11.7916 CL**); the 0.06 CL delta reflects differences in the
+> scoring scripts and is expected.
+
+---
+## Ongoing Work
+
+Following the hackathon, we conducted systematic ablations to better
+understand which architectural choices drove the competition result.
+All numbers in this section are from internal `dev/evaluate.py` so that
+ablations are compared apples-to-apples against the same scorer; the
+**final** competition result is the leaderboard 11.7916 CL reported
+above. Two findings are being prepared as a separate technical report:
+
+- **Tracer conditioning ablation.** Removing per-layer FiLM and head-level
+  tracer embedding (while retaining input-level TracerNorm) improves
+  internal validation MAE from 11.73 → 9.03 CL. This is consistent with
+  the tracer-agnostic design of the Centiloid scale: once per-tracer
+  intensity calibration is handled at the input (TracerNorm), further
+  per-layer conditioning introduces shortcut learning rather than useful
+  signal.
+
+- **Spatial attention extension.** Adding CBAM-style spatial attention at
+  stage 4 (analogous to the Klunk CTX target VOI) accelerates early
+  convergence by ~2× but does not improve final accuracy in this
+  configuration (10.02 CL internal). We interpret this as evidence that
+  the backbone already learns region-selectivity implicitly on 2k samples.
+
+Details, per-tracer breakdowns, and seed ablations are tracked in
+[`ablations/`](ablations/). The competition submission (`PETResNet` with
+FiLM + tracer embedding, **leaderboard MAE 11.7916 CL**) remains the
+canonical reference reported above.
+
+---
+
+## Quick start
+
+### Environment Setup
+#### BU SCC
 ```bash
-cd <your_team_folder>
+module load medaihack/spring-2026
+module load python3/3.12.4
+
+# Create venv (one-time) — name must match the path hardcoded in predict.sh
+virtualenv /projectnb/medaihack/team25/venv_name
+source /projectnb/medaihack/team25/venv_name/bin/activate
+
 git clone https://github.com/vkola-lab/medaihack.git
 cd medaihack/ABPET
-```
-
-## Environment Setup
-
-One person per team should create the team's virtual environment. All team members then activate it for their sessions.
-
-### First-time setup
-
-```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-
-# Replace YOUR_TEAM and venv_name with your team directory and preferred name
-virtualenv /projectnb/medaihack/YOUR_TEAM/venv_name
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
 pip install -r requirements.txt
+pip install -e .
 ```
 
-### Subsequent sessions
+> If you prefer a different venv name, update both this command **and**
+> line 28 of `predict.sh` so the judges' inference script activates the
+> right environment.
 
-For terminal and batch scripts, include these three lines:
+For **OnDemand** (Jupyter / Code Server): load the two modules in the
+module list and place the `source` command in the pre-launch dialog box.
+
+#### Outside BU SCC
 
 ```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
+git clone https://github.com/vkola-lab/medaihack.git
+cd medaihack/ABPET
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && pip install -e .
 ```
+### Usage
 
-For **OnDemand** (Jupyter or Code Server): load the two modules in the module list, and place the `source` command in the pre-launch dialog box.
-
-To use your venv as a Jupyter kernel, run this once after activating it:
+Environment Setup above already handled `pip install`. From here:
 
 ```bash
-python -m ipykernel install --user --name venv_name --display-name "Python (venv_name)"
+# 1. Link data (BU SCC — one-liner, no copy)
+ln -s /projectnb/medaihack/ABPET/data data
+
+# 2. Train → Predict → Evaluate  (configs in dev/config/*.yaml)
+bash dev/train.sh                                          # uses dev/config/train.yaml
+python dev/predict.py --config dev/config/predict.yaml
+python dev/evaluate.py --pred results/predictions.csv --gt data/val.csv
+
+# 3. End-to-end inference (judge entry point)
+bash predict.sh data/val.csv checkpoints/best_model.pt predictions.csv
+
+# 4. EDA
+bash eda/run_all.sh                                        # pre-train (01-03)
+bash eda/run_all.sh --pred_csv results/predictions.csv     # + post-train (04)
 ```
 
-Then refresh JupyterLab and select **Python (venv_name)** from the kernel list.
-
-To install additional packages (e.g. if your approach needs `transformers` or `einops`):
-
-```bash
-pip install <package-name>
+Outside BU SCC, place the dataset at `data/` (or symlink):
+```
+data/
+├── train.csv
+├── val.csv
+└── npy_files/
 ```
 
-> **Warning:** Do **not** reinstall or upgrade `torch`, `torchvision`, or any `cuda`-related package. The versions in `requirements.txt` are matched to the CUDA driver on the cluster. Upgrading them will likely break GPU support.
+See [`ablations/`](ablations/README.md) for post-hoc studies (No-FiLM
+variant, stage-4 attention) that are not part of the canonical submission.
+
+For an in-browser demo dashboard — upload a `.npy` PET volume and view
+axial / coronal / sagittal slices alongside the model's prediction —
+open [`front_end/index.html`](front_end/index.html). Pure static HTML +
+JS, no server. This is optional and not on the evaluation path.
+
+---
+
+## Repository Structure
+
+```text
+ABPET/
+├── mygo_centiloid/               # Installable Python package
+│   ├── model/                        PETResNet (+ FiLM / attn variants)
+│   │   ├── petresnet_film.py         canonical model (TracerNorm + FiLM)
+│   │   ├── petresnet_no_film.py      ablation: TracerNorm only
+│   │   ├── petresnet_attn.py         ablation: CBAM spatial attention
+│   │   └── petresnet_attn_gated.py   ablation: gated attention
+│   ├── losses/losses.py              CentiloidLoss, get_criterion
+│   ├── data/dataset.py               PETDataset
+│   ├── data/augmentation.py          build_train_transform (per-tracer strength)
+│   └── utils/run_logger.py           training logger
+│
+├── dev/                          # Runnable scripts + config (canonical pipeline)
+│   ├── train.py                      training loop (AMP, weighted sampler, CosineWR)
+│   ├── predict.py                    inference → predictions.csv
+│   ├── evaluate.py                   MAE / RMSE / Pearson r report
+│   ├── train.sh                      launcher (single --config arg)
+│   ├── experimental_fet/
+│   │   └── gradcam.py                HiResCAM over axial / coronal / sagittal slices
+│   └── config/
+│       ├── train.yaml                canonical training hyperparameters
+│       └── predict.yaml              inference paths + batch settings
+│
+├── ablations/                    # Post-hackathon studies (see ablations/README.md)
+│   ├── README.md                     index + headline results
+│   ├── configs/
+│   │   ├── train_no_tracernorm.yaml  No-FiLM / TracerNorm-only variant
+│   │   ├── stage3_attn.yaml          + stage-4 CBAM attention
+│   │   └── stage3_attn_gated.yaml    residual / zero-init attention
+│   ├── scripts/
+│   │   ├── ablate_tracer_norm.py     toggle TracerNorm → identity at inference
+│   │   ├── inspect_tracer_norm.py    dump learned γ / β per tracer
+│   │   └── inspect_attention.py      render attention maps over PET slices
+│   └── studies/
+│       ├── tracer_conditioning.md    No-FiLM write-up
+│       └── attention_study.md        stage-4 CBAM write-up
+│
+├── eda/                          # EDA suite (see eda/README.md)
+│   ├── 01_centiloid_distribution.py  pre-train: target distribution
+│   ├── 02_tracer_comparison.py       pre-train: per-tracer intensity profiles
+│   ├── 03_calibration_analysis.py    pre-train: tracer ↔ Centiloid calibration
+│   ├── 04_model_error_analysis.py    post-train: residuals + failure modes
+│   └── run_all.sh                    one-click runner
+│
+├── figures/                      # architecture diagram + logo
+├── front_end/                    # optional static HTML dashboard — upload .npy, view slices + CL prediction
+│
+├── predict.sh                    # judge entry point → dev/predict.py
+├── setup.py                      # pip install -e .
+├── requirements.txt
+├── LICENSE
+└── README.md
+```
+
+After `pip install -e .`:
+
+```python
+from mygo_centiloid import PETResNet, PETDataset, CentiloidLoss, get_criterion, build_train_transform
+```
+
+---
+
+## Architecture
+
+```text
+Input: (B, 1, 128, 128, 128) + tracer_id (B,)
+          │
+          ▼
+     TracerNorm            per-tracer learned (γ, β)
+          │
+          ▼
+    Stem: Conv3d(1→64, 7³, s=2) → BN → ReLU → MaxPool3d(s=2)
+          │                                                     TracerEmbedding
+          ▼                                                       (4 → 32)
+    Stage 1: ResBlock×2 (s=1) + FiLM  →  (B,  64, 32, 32, 32)  ◄──┤
+    Stage 2: ResBlock×2 (s=2) + FiLM  →  (B, 128, 16, 16, 16)  ◄──┤
+    Stage 3: ResBlock×2 (s=2) + FiLM  →  (B, 256,  8,  8,  8)  ◄──┤
+    Stage 4: ResBlock×2 (s=2) + FiLM  →  (B, 512,  4,  4,  4)  ◄──┘
+          │
+          ▼
+    Global Average Pool  →  (B, 512)
+          │
+          ▼
+    Concat[image_feat ‖ tracer_emb]  →  (B, 544)
+          │
+          ▼
+    FC(544→256) → BN → GELU → Dropout(0.4)
+    FC(256→ 64) → BN → GELU → Dropout(0.2)
+    FC( 64→  1)   ← linear (CL can be negative)
+          │
+          ▼
+    Centiloid prediction (B,)
+```
+
+**Footprint:** ~33.4 M trainable parameters (3D ResNet-18 backbone
+dominates; TracerNorm + FiLM + head ≈ 0.2 M). Fits on a single
+NVIDIA L40S at `batch_size=4` with AMP enabled.
+
+**Loss:** 
+`CentiloidLoss = α · Huber(δ=25) + (1−α) · (1 − Pearson r)`, α = 0.7.
+
+**Training**
+
+- **Optimizer:** AdamW (lr = 1e-4, weight decay = 1e-4)
+- **Scheduler:** CosineAnnealingWarmRestarts (T₀ = 20, T_mult = 2)
+- **Precision:** automatic mixed precision (AMP) via `torch.amp`
+- **Gradient clipping:** max norm 1.0
+- **Sampler:** 6-bin `WeightedRandomSampler` (inverse frequency over Centiloid bins)
+- **Early stopping:** patience = 20 epochs on val MAE
+- **Schedule:** 100 epochs, batch size 4, ≈ 500 iters / epoch on the 2,000-sample train split.
+
+**Augmentation** 
+
+Per-tracer strength:
+1. **STRONG** for NAV / PIB (n < 100), **standard** for FBP / FBB. 
+2. All transforms preserve `(1, 128, 128, 128)` shape and clamp to `[0, 1]`.
+
+- `RandFlipLR` — left–right flip (brain is bilaterally symmetric)
+- `RandAffine3D` — small rotation + translation
+- `RandGamma` — intensity gamma jitter
+- `RandBiasShift` — additive per-volume bias
+- `RandGaussianNoise` — voxel-wise Gaussian noise
 
 ---
 
 ## Data
 
-```text
-/projectnb/medaihack/ABPET/
-└── data/
-    ├── npy_files/               # All .npy volumes
-    ├── train.csv                # Training split (2,000 samples)
-    └── val.csv                  # Validation split (500 samples)
-```
+| Split | Cohorts | N | Breakdown |
+|-------|---------|---|-----------|
+| Train | NACC + A4 | 2,000 | 1,195 NACC + 805 A4 |
+| Val   | NACC + A4 | 500   | 305 NACC + 195 A4 |
 
-| Split      | Cohorts   | N Samples | Description                                              |
-| ---------- | --------- | --------- | -------------------------------------------------------- |
-| Training   | NACC + A4 | 2,000     | 1,195 NACC + 805 A4 samples                              |
-| Validation | NACC + A4 | 500       | 305 NACC + 195 A4 samples                                |
+Each sample is a preprocessed `.npy` volume with an associated Centiloid score and tracer label.
 
-Each sample is a preprocessed `.npy` file with an associated centiloid score and tracer label.
+### Schema
 
-### CSV Format
+| Column | Type | Description |
+|--------|------|-------------|
+| `ID` | str | Subject identifier |
+| `npy_path` | str | Path to `(1, 128, 128, 128)` float32 `.npy`, range `[0, 1]` |
+| `CENTILOIDS` | float | Regression target (typically −50 to 200+) |
+| `TRACER.AMY` | str | Radiotracer: `FBP`, `FBB`, `NAV`, `PIB` |
 
-| Column       | Type  | Description                                            |
-| ------------ | ----- | ------------------------------------------------------ |
-| `npy_path`   | str   | Path to the preprocessed `.npy` file                   |
-| `CENTILOIDS` | float | Target — amyloid burden score (typically 0–150+)       |
-| `TRACER.AMY` | str   | Radiotracer used: `FBP`, `FBB`, `NAV`, `PIB`           |
-| `ID`         | str   | Subject identifier                                     |
+### Why tracer matters
 
-### Image Format
+| Code | Full name | N (train+val) |
+|------|-----------|---------------|
+| `FBP` | Florbetapir | 1,182 |
+| `FBB` | Florbetaben | 568 |
+| `NAV` | Florbetanav | 85 |
+| `PIB` | Pittsburgh Compound B | 665 |
 
-Each `.npy` file contains a single preprocessed PET volume:
+Each tracer binds to amyloid with different affinity and produces different
+uptake patterns. The Centiloid scale harmonizes across tracers, but the raw
+images still differ — our `TracerNorm` + `FiLM` conditioning addresses this.
 
-* **Shape:** `(1, 128, 128, 128)` — 1 channel, 128³ voxels
-* **Dtype:** `float32`
-* **Value range:** `[0, 1]` (min-max normalized)
+### Preprocessing already applied
 
-### Why Tracer Matters
+All images were preprocessed from raw NIfTI PET scans (we did **not** redo
+any of these). The following steps were applied in order:
 
-The four tracers in this dataset are:
+1. **Channel first** — `(C, H, W, D)` format.
+2. **RAS orientation** — standard neuroimaging alignment.
+3. **Isotropic resampling** — 2 mm × 2 mm × 2 mm, trilinear.
+4. **Foreground cropping** — 10-voxel margin via MONAI `CropForeground`.
+5. **Resize** — `128 × 128 × 128`, trilinear.
+6. **Spatial padding** — to exactly 128³ if needed.
+7. **Dynamic frame averaging** — multi-frame PET → single static volume.
+8. **Shape enforcement** — final center-crop/pad to `(1, 128, 128, 128)`.
+9. **Min-max normalization** — `img = (img - img.min()) / (img.max() - img.min())`.
 
-| Code  | Full name      |
-| ----- | -------------- |
-| `FBP` | Florbetapir    |
-| `FBB` | Florbetaben    |
-| `NAV` | Florbetanav    |
-| `PIB` | Pittsburgh Compound B |
-
-Each binds to amyloid with different affinity and produces different uptake patterns. The centiloid scale was designed to harmonize across tracers, but the raw images still differ by tracer. Your model should account for this — a tracer embedding is one common approach.
-
-## Preprocessing Already Applied
-
-All images have been preprocessed from raw NIfTI PET scans. The following transformations were applied **in order** (you do **not** need to redo any of these):
-
-### 1. Ensure Channel First
-
-Converts the loaded NIfTI image to `(C, H, W, D)` format, where `C` is the channel dimension.
-
-### 2. Orientation to RAS
-
-Reorients the image to **RAS** (Right-Anterior-Superior) standard neuroimaging orientation. This ensures consistent spatial alignment across subjects and scanners.
-
-### 3. Isotropic Resampling to 2mm
-
-Resamples the image to **2mm × 2mm × 2mm isotropic voxel spacing** using trilinear interpolation. Raw PET scans vary widely in resolution across scanners and protocols — this standardizes the spatial scale.
-
-### 4. Foreground Cropping
-
-Removes background voxels (air/zero-padding outside the brain) with a 10-voxel margin using MONAI's `CropForeground`. This reduces unnecessary empty space.
-
-### 5. Resize to 128³
-
-Resizes the cropped volume to a fixed `128 × 128 × 128` spatial size using trilinear interpolation. This guarantees uniform input dimensions for the network.
-
-### 6. Spatial Padding
-
-Pads to exactly `128 × 128 × 128` if the resize output is slightly smaller (safety step).
-
-### 7. Dynamic Frame Averaging
-
-Some PET scans have multiple temporal frames (dynamic acquisitions). If multiple frames exist, they are averaged into a single static volume. This produces a single `(1, 128, 128, 128)` output.
-
-### 8. Shape Enforcement
-
-A final safety check centers and crops/pads the volume to ensure the exact output shape `(1, 128, 128, 128)`.
-
-### 9. Min-Max Normalization to [0, 1]
-
-Each volume is independently normalized to the `[0, 1]` range:
-
-```python
-img = (img - img.min()) / (img.max() - img.min())
-```
-
-## Repository Structure
-
-```text
-/projectnb/medaihack/YOUR_TEAM/medaihack/ABPET/
-├── checkpoints/             # Saved model weights (created at train time)
-├── logs/                    # Training log files (created at train time)
-├── results/                 # Metrics CSV and plots (created at train time)
-├── dataset.py               # Shared dataset class
-├── losses.py                # Loss functions
-├── model.py                 # 3D CNN architecture
-├── predict.py               # Inference script
-├── predict.sh               # Evaluation entry point
-├── train.py                 # Training script
-├── visualize_pet.ipynb      # Notebook for exploring PET volumes
-├── README.md
-└── requirements.txt
-```
-
-## Getting Started
-
-To get started, you can visualize the different images using `visualize_pet.ipynb`.
-
-**Interactive (OnDemand terminal):**
-
-```bash
-cd /projectnb/medaihack/YOUR_TEAM/medaihack/ABPET
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
-
-# Train
-python train.py --train_csv /projectnb/medaihack/ABPET/data/train.csv --val_csv /projectnb/medaihack/ABPET/data/val.csv
-
-# Predict
-python predict.py --csv /projectnb/medaihack/ABPET/data/val.csv --checkpoint checkpoints/best_model.pt
-```
-
-## Pipeline
-
-```text
-Preprocessed 3D amyloid PET volumes (.npy)
-(shape: 1 x 128 x 128 x 128, float32, normalized to [0,1])
-+ metadata from train.csv / val.csv
-(columns: npy_path, CENTILOIDS, TRACER.AMY, ID)
-            |
-            v
-dataset.py  --->  load PET volume + tracer label + centiloid target
-            |
-            v
-model.py    --->  3D CNN image encoder
-                  + tracer embedding
-                  + feature fusion
-                  + regression head
-            |
-            v
-losses.py   --->  regression loss
-                  (MAE / MSE)
-            |
-            v
-train.py    --->  checkpoints/best_model.pt              (best model weights)
-                  logs/train_{timestamp}.log             (training log)
-                  results/metrics_{timestamp}.csv        (per-epoch metrics)
-                  results/curves_{timestamp}.png         (loss / MAE / r plots)
-                  results/val_report_{timestamp}.csv     (best-epoch MAE and r, overall + per tracer)
-                  console: train loss, val MAE, Pearson correlation
-            |
-            v
-predict.py  --->  predictions.csv
-                  columns: ID, npy_path, TRACER.AMY, PREDICTED_CENTILOIDS
-```
+---
 
 ## Outputs
 
-After training the following files are created automatically:
+All outputs are organized under `results/` and `checkpoints/`:
 
-| File | Description |
-| ---- | ----------- |
-| `checkpoints/best_model.pt` | Best model weights (lowest val MAE) |
-| `logs/train_{timestamp}.log` | Full training log |
-| `results/metrics_{timestamp}.csv` | Per-epoch train loss, val MAE, val r |
-| `results/curves_{timestamp}.png` | Loss / MAE / correlation plots |
-| `results/val_report_{timestamp}.csv` | MAE and Pearson r for best checkpoint — overall and broken down by tracer |
+```
+results/
+├── predictions.csv                        from dev/predict.py
+└── eda/
+    ├── pre_train/                         from scripts 01–03 (data analysis)
+    │   ├── 01_centiloid_distribution/
+    │   ├── 02_tracer_comparison/
+    │   └── 03_calibration_analysis/
+    └── post_train/                        from script 04 (model error analysis)
+        └── 04_model_error_analysis/
 
-## Baseline Performance
+checkpoints/
+├── best_model.pt                          lowest val MAE
+└── last_model.pt                          most recent epoch
+```
 
-The unmodified starter code achieves the following on the validation set:
+Each EDA folder contains `*.png` figures and a `*.txt` summary report
+with auditable numbers.
 
-| Tracer | N | MAE (CL) | Pearson r |
-| ------ | --- | -------- | --------- |
-| **ALL** | 500 | **19.77** | **0.790** |
-| FBP | 236 | 19.28 | 0.797 |
-| FBB | 114 | 20.04 | 0.804 |
-| PIB | 133 | 21.17 | 0.790 |
-| NAV | 17  | 13.86 | 0.946 |
+---
 
-Your goal is to beat this baseline. Lower MAE and higher Pearson r are better.
+## Submission & Evaluation
 
-## Submission
-
-Before the deadline, make sure your repository is in order:
-
-1. Your best checkpoint is saved at `checkpoints/best_model.pt`
-2. `predict.sh` has your team's venv path hardcoded (replace the `.venv` line)
-3. If you changed the model architecture, `predict.py` reflects it (see `# MODEL` markers)
-4. Test end-to-end: `bash predict.sh /projectnb/medaihack/ABPET/data/val.csv` should produce `predictions.csv` without errors
-
-The judges will clone your repository and run `predict.sh` against the held-out test set.
-
-## Evaluation
-
-Models will be evaluated on a held-out test set. The judges will run:
+Our submission follows the hackathon's standard entry point. Judges
+clone the repo and run:
 
 ```bash
 bash predict.sh <test.csv> <checkpoint.pt> predictions.csv
 ```
 
-To test your own predictions on the validation set:
+`predict.sh` activates our team venv at
+`/projectnb/medaihack/team25/venv_name/bin/activate` and calls
+`dev/predict.py` with the provided CSV and checkpoint. The output
+`predictions.csv` contains `ID`, `npy_path`, `TRACER.AMY`, and
+`PREDICTED_CENTILOIDS` columns.
 
-```bash
-cd /projectnb/medaihack/ABPET/medaihack/ABPET
-source /projectnb/medaihack/YOUR_TEAM/venv_name/bin/activate
-python predict.py --csv /projectnb/medaihack/ABPET/data/val.csv --checkpoint checkpoints/best_model.pt --output predictions.csv
-```
-
-This calls `predict.py`, which must output a CSV with a `PREDICTED_CENTILOIDS` column. **If you replace `BaselineCNN` with your own model, you must update the import and model instantiation in `predict.py`** (marked with `# MODEL`). Make sure `predict.sh` points to your best checkpoint.
-
-Scoring metrics:
+**Scoring metrics** (same as the hackathon baseline):
 
 * **Primary:** Mean Absolute Error (MAE) in centiloid units
-* **Secondary:** Pearson correlation coefficient between predicted and true centiloid scores
+* **Secondary:** Pearson correlation coefficient
 
-## Tips
+**Checklist for reproducibility:**
 
-* The centiloid distribution is often skewed (many low values, fewer high values). Consider how your loss function handles this.
-* Tracer conditioning can be important — consider integrating the `TRACER.AMY` column.
-* The data is already normalized to `[0, 1]`, so you can feed it directly into your network.
-* 3D medical images are memory-intensive. Watch your batch size and consider mixed-precision training (`torch.amp`).
+1. Best checkpoint at `checkpoints/best_model.pt` (lowest val MAE).
+2. `predict.sh` has the team venv path hardcoded (line 28).
+3. `dev/predict.py` instantiates `PETResNet` from
+   `mygo_centiloid.model.petresnet_film`.
+4. Smoke test: `bash predict.sh data/val.csv checkpoints/best_model.pt predictions.csv`
+   produces a 500-row CSV without errors.
 
+---
 
+## Disclaimer
 
+This software and any trained model weights distributed with it are
+provided **for academic and research purposes only**. They are **not a
+medical device** and have **not** been validated or approved by the
+U.S. Food and Drug Administration (FDA), the European Medicines Agency
+(EMA), or any other regulatory body.
+
+**The model and its inferences must not be used to inform clinical
+diagnosis, treatment decisions, prognosis, or any patient-care
+workflow.** The training data (2,000 hackathon samples across four
+tracers) is too small and too narrow to support any clinical claim, and
+the model has undergone no prospective or external validation.
+
+Any use of this software or its outputs in a clinical setting is the
+sole responsibility of the user.
+
+---
+
+## License
+
+Released under the **MIT License** — see [`LICENSE`](LICENSE) for the
+full text, including the research-use-only notice.
+
+All code in `mygo_centiloid/`, `dev/`, and `ablations/` is original to this
+project; no third-party code carrying a copyleft or non-commercial license
+was incorporated.
+
+---
+
+## References
+
+Citations for the prior work that directly informed each MYGO component.
+
+### Architecture
+
+1. **He K, Zhang X, Ren S, Sun J.** Deep Residual Learning for Image
+   Recognition. *CVPR* 2016. — the 2D ResNet-18 backbone we extend to 3D.
+   [arXiv:1512.03385](https://arxiv.org/abs/1512.03385)
+2. **Hara K, Kataoka H, Satoh Y.** Can Spatiotemporal 3D CNNs Retrace the
+   History of 2D CNNs and ImageNet? *CVPR* 2018. — empirical basis for
+   using 3D ResNets on volumetric data at our scale.
+   [arXiv:1711.09577](https://arxiv.org/abs/1711.09577)
+3. **Perez E, Strub F, de Vries H, Dumoulin V, Courville A.** FiLM:
+   Visual Reasoning with a General Conditioning Layer. *AAAI* 2018. —
+   the `FiLMBlock` at every ResNet stage (tracer-conditioned γ, β).
+   [arXiv:1709.07871](https://arxiv.org/abs/1709.07871)
+4. **Dumoulin V, Shlens J, Kudlur M.** A Learned Representation for
+   Artistic Style. *ICLR* 2017. — conditional instance normalization,
+   the conceptual precursor to our input-level `TracerNorm`.
+   [arXiv:1610.07629](https://arxiv.org/abs/1610.07629)
+5. **Ioffe S, Szegedy C.** Batch Normalization: Accelerating Deep Network
+   Training by Reducing Internal Covariate Shift. *ICML* 2015. —
+   `BatchNorm3d` in the stem, every `ResBlock3D`, every downsample
+   shortcut, and `BatchNorm1d` in the regression head.
+   [arXiv:1502.03167](https://arxiv.org/abs/1502.03167)
+
+### Loss and optimization
+
+6. **Huber PJ.** Robust Estimation of a Location Parameter. *Annals of
+   Mathematical Statistics* 1964;35(1):73–101. — Huber term in
+   `CentiloidLoss` with `δ=25` ≈ Centiloid IQR.
+7. **Loshchilov I, Hutter F.** Decoupled Weight Decay Regularization
+   (AdamW). *ICLR* 2019.
+   [arXiv:1711.05101](https://arxiv.org/abs/1711.05101)
+8. **Loshchilov I, Hutter F.** SGDR: Stochastic Gradient Descent with
+   Warm Restarts. *ICLR* 2017. — `CosineAnnealingWarmRestarts(T_0=20, T_mult=2)`.
+   [arXiv:1608.03983](https://arxiv.org/abs/1608.03983)
+9. **Micikevicius P, et al.** Mixed Precision Training. *ICLR* 2018. —
+   AMP autocast + GradScaler in `dev/train.py`.
+   [arXiv:1710.03740](https://arxiv.org/abs/1710.03740)
+10. **Buda M, Maki A, Mazurowski MA.** A systematic study of the class
+    imbalance problem in convolutional neural networks.
+    *Neural Networks* 2018;106:249–259. — motivation for our six-bin
+    `WeightedRandomSampler` on Centiloid.
+
+### Medical-imaging augmentation
+
+11. **Pérez-García F, Sparks R, Ourselin S.** TorchIO: a Python library
+    for efficient loading, preprocessing, augmentation and patch-based
+    sampling of medical images in deep learning. *Computer Methods and
+    Programs in Biomedicine* 2021;208:106236. — reference for
+    per-tracer-strength 3D augmentation choices in
+    `mygo_centiloid/data/augmentation.py`.
+    [doi:10.1016/j.cmpb.2021.106236](https://doi.org/10.1016/j.cmpb.2021.106236)
+
+### Domain — amyloid PET and the Centiloid scale
+
+12. **Klunk WE, et al.** The Centiloid Project: standardizing
+    quantitative amyloid plaque estimation by PET. *Alzheimer's &
+    Dementia* 2015;11(1):1–15. — the regression target; source of the
+    positivity threshold (24.4 CL) used throughout `eda/`.
+    [doi:10.1016/j.jalz.2014.07.003](https://doi.org/10.1016/j.jalz.2014.07.003)
+13. **Jagust WJ, et al.** The Alzheimer's Disease Neuroimaging Initiative
+    2 PET Core: 2015. *Alzheimer's & Dementia* 2015;11(7):757–771. —
+    reference preprocessing pipeline for amyloid PET.
+    [doi:10.1016/j.jalz.2015.05.001](https://doi.org/10.1016/j.jalz.2015.05.001)
+
+### Related Kolachalama Lab work
+
+14. **Qiu S, et al.** Multimodal deep learning for Alzheimer's disease
+    dementia assessment. *Nature Communications* 2022;13:3404. — the
+    lab's 3D-CNN + fusion precedent for structural brain imaging.
+    [doi:10.1038/s41467-022-31037-5](https://doi.org/10.1038/s41467-022-31037-5)
+    · [vkola-lab/ncomms2022](https://github.com/vkola-lab/ncomms2022)
+15. **Kolachalama Lab.** AI-driven fusion of multimodal data for
+    Alzheimer's disease biomarker assessment. *Nature Communications*
+    2025. — the lab's current amyloid/τ multimodal framework; its
+    `image_processing/pet_pipeline.sh` is the upstream amyloid-PET
+    reference pipeline.
+    [doi:10.1038/s41467-025-62590-4](https://doi.org/10.1038/s41467-025-62590-4)
+    · [vkola-lab/ncomms2025](https://github.com/vkola-lab/ncomms2025)

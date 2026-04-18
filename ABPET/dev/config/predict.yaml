@@ -1,0 +1,21 @@
+# Default inference configuration for mygo_centiloid.
+#
+# Launch:
+#     python dev/predict.py --config dev/config/predict.yaml
+#     bash   predict.sh <csv> [ckpt] [out]   # judge entry; overrides paths
+#
+# Model architecture is read from the checkpoint (ckpt["model"], ckpt["emb_dim"],
+# etc.), so it is not duplicated here.
+
+paths:
+  csv:        data/val.csv
+  checkpoint: checkpoints/best_model.pt
+  output:     results/predictions.csv
+  log_dir:    logs
+
+run:
+  name: null                  # null → auto-stamped
+
+inference:
+  batch_size:  4
+  num_workers: 4
