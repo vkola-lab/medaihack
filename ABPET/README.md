@@ -32,9 +32,9 @@
 </p>
 
 ---
-We predict continuous Centiloid scores from preprocessed 3D amyloid β-PET
+Our team predict continuous Centiloid scores from preprocessed 3D amyloid β-PET
 volumes (`(1, 128, 128, 128)`, four tracers: **FBP**, **FBB**, **NAV**, **PIB**),
-trained on the MedAI Spring 2026 Hackathon data (2,000 train + 500 val,
+trained on the MedAI Spring 2026 Hackathon Challenge 2 data (2,000 train + 500 val,
 NACC + A4 cohorts). 
 
 The pipeline is specifically designed to handle the
@@ -49,7 +49,7 @@ distribution.
 
 Our model `PETResNet` combines:
 - **3D ResNet-18** backbone with **FiLM** conditioning at every residual stage;
-- **TracerNorm** — per-tracer learned (γ, β) intensity rescale at the input;
+- **TracerNorm** per-tracer learned (γ, β) intensity rescale, which we subsequently found to parallel the per-tracer affine structure of published Centiloid calibration equations (Klunk et al. 2015; Navitsky et al. 2018; Rowe et al. 2016, 2017)
 - **Tracer embedding** concatenated into our 3-layer regression head;
 - **Huber + Pearson** combined loss trained with an inverse-frequency
   `WeightedRandomSampler` over six Centiloid bins.
@@ -97,7 +97,8 @@ the validation set (n = 500).
 | NAV | 17  | 13.86               | **9.28** | 0.946             | **0.981** |
 
 > Per-tracer rows are from our internal eval script (weighted average
-> 11.73). The **final** competition score is the leaderboard number
+> 11.73). \
+> The **final** competition score is the leaderboard number
 > (**11.7916 CL**); the 0.06 CL delta reflects differences in the
 > scoring scripts and is expected.
 
