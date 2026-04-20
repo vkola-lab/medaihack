@@ -21,7 +21,7 @@
   <a href="https://github.com/ayiii-a">Zijiang Zhao</a> ·
   <a href="https://github.com/karthikayanidevaraj">Karthikayani Devaraj</a> ·
   Shruthi Ashok ·
-  athvika Mallavarapu
+  Sathvika Mallavarapu
 </p>
 
 <p align="center">
