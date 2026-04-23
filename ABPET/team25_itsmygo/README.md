@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="figuresogos/mygo_centiloid_logo.svg" alt="MYGO-Centiloid Logo" width="200" style="margin-bottom: -20px;"/>
+  <img src="figures/logos/mygo_centiloid_logo.svg" alt="MYGO-Centiloid Logo" width="200" style="margin-bottom: -20px;"/>
 </p>
 
 <h1 align="center">MYGO-Centiloid</h1>
