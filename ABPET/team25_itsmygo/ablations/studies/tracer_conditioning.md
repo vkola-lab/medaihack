@@ -31,7 +31,7 @@ optimizer, scheduler, augmentation, and seed (42).
 
 Model sources:
 
-- [`mygo_centiloid/model/petresnet_film.py`](../../mygo_centiloid/model/petresnet_film.py) — submission
+- [`mygo_centiloid/model/petresnet.py`](../../mygo_centiloid/model/petresnet.py) — submission
 - [`mygo_centiloid/model/petresnet_no_gap.py`](../../mygo_centiloid/model/petresnet_no_gap.py) — `−GAP`
 - [`mygo_centiloid/model/petresnet_no_film.py`](../../mygo_centiloid/model/petresnet_no_film.py) — `−FiLM`
 - [`mygo_centiloid/model/petresnet_tracer_norm_only.py`](../../mygo_centiloid/model/petresnet_tracer_norm_only.py) — TracerNorm-only

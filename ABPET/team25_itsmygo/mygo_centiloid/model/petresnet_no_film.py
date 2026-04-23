@@ -1,54 +1,52 @@
 """
-Ablation: PETResNet without FiLM conditioning or shared tracer embedding.
+Ablation: PETResNet with FiLM removed, tracer-embedding GAP concat kept.
 
-Isolates the contribution of FiLM + tracer-embedding conditioning by removing
-them while preserving every other component of the full model:
+This is the report's **−FiLM** variant (§3.5, Table 2; MAE 10.49 CL on the
+internal 500-subject validation split, §4.3 Table 4). TracerNorm and the
+tracer-embedding concat at the GAP output remain active; the per-stage FiLM
+blocks are removed, so feature-space conditioning goes exclusively through
+the head-level embedding concat.
 
   Kept:
-    - TracerNorm           (per-tracer intensity γ/β — independent embeddings)
+    - TracerNorm           (per-tracer input-space γ/β)
+    - Shared tracer embedding (concatenated with pooled features)
     - 3D ResNet-18 backbone
-    - Regression head (no final activation)
+    - Tracer-embedding concat into the regression head (feat_dim = 512 + emb_dim)
 
   Removed:
-    - Shared tracer embedding (`tracer_emb`)
     - FiLM blocks at every ResNet stage
-    - Concatenation of tracer embedding into the head (feat_dim: 544 → 512)
-
-The forward signature still accepts `tracer_idx` so training / evaluation
-code that targets PETResNet can drop in this ablation unchanged — the id is
-routed to TracerNorm only.
 """
 
 import torch
 import torch.nn as nn
 
-from mygo_centiloid.model.petresnet_film import TracerNorm, ResBlock3D
+from mygo_centiloid.model.petresnet import TracerNorm, ResBlock3D
 
 
 class PETResNetNoFiLM(nn.Module):
     """
-    3D ResNet-18 + TracerNorm, with FiLM and tracer embedding ablated.
+    3D ResNet-18 + TracerNorm + tracer-emb concat at GAP, WITHOUT FiLM blocks.
 
     Forward pass:
         TracerNorm                           per-tracer intensity fix
               ↓
         Stem: Conv7³(s=2) + MaxPool(s=2)    (B,  1,128³) → (B, 64,32³)
               ↓
-        Stage 1: ResBlock × 2  (stride=1)   → (B,  64, 32³)
-        Stage 2: ResBlock × 2  (stride=2)   → (B, 128, 16³)
-        Stage 3: ResBlock × 2  (stride=2)   → (B, 256,  8³)
-        Stage 4: ResBlock × 2  (stride=2)   → (B, 512,  4³)
+        Stage 1..4: ResBlock × 2            (no FiLM)
               ↓
         Global Average Pool                 → (B, 512)
               ↓
-        FC(512→256) → BN → GELU → Drop(0.4)
-        FC(256→ 64) → BN → GELU → Drop(0.2)
-        FC( 64→  1)   ← NO activation (centiloids can be negative)
+        Concat tracer_emb                   → (B, 512 + emb_dim)
+              ↓
+        FC(feat_dim→256) → BN → GELU → Drop(0.4)
+        FC(256→ 64)      → BN → GELU → Drop(0.2)
+        FC( 64→  1)      ← linear output (CL can be negative)
     """
 
     def __init__(
         self,
         num_tracers:    int,
+        emb_dim:        int   = 32,
         dropout_high:   float = 0.4,
         dropout_low:    float = 0.2,
         mean_centiloid: float = 0.0,
@@ -56,6 +54,7 @@ class PETResNetNoFiLM(nn.Module):
         super().__init__()
 
         self.tracer_norm = TracerNorm(num_tracers)
+        self.tracer_emb  = nn.Embedding(num_tracers, emb_dim)
 
         self.stem = nn.Sequential(
             nn.Conv3d(1, 64, kernel_size=7, stride=2, padding=3, bias=False),
@@ -71,8 +70,9 @@ class PETResNetNoFiLM(nn.Module):
 
         self.gap = nn.AdaptiveAvgPool3d(1)
 
+        feat_dim = 512 + emb_dim
         self.head = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(feat_dim, 256),
             nn.BatchNorm1d(256),
             nn.GELU(),
             nn.Dropout(dropout_high),
@@ -93,6 +93,7 @@ class PETResNetNoFiLM(nn.Module):
 
     def forward(self, x: torch.Tensor, tracer_idx: torch.Tensor) -> torch.Tensor:
         x = self.tracer_norm(x, tracer_idx)
+        t = self.tracer_emb(tracer_idx)
 
         x = self.stem(x)
         x = self.stage1(x)
@@ -101,6 +102,7 @@ class PETResNetNoFiLM(nn.Module):
         x = self.stage4(x)
 
         x = self.gap(x).flatten(1)
+        x = torch.cat([x, t], dim=1)
         return self.head(x).squeeze(1)
 
     def summary(self, input_size=(1, 1, 128, 128, 128), depth: int = 4) -> None:
@@ -110,7 +112,7 @@ class PETResNetNoFiLM(nn.Module):
         print(bar)
 
         device      = next(self.parameters()).device
-        num_tracers = self.tracer_norm.scale.num_embeddings
+        num_tracers = self.tracer_emb.num_embeddings
         dummy_x     = torch.zeros(*input_size, device=device)
         dummy_id    = torch.zeros(input_size[0], dtype=torch.long, device=device)
 

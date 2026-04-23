@@ -57,13 +57,15 @@ def make_run_dir(
     base:     str = "logs",
     run_name: str | None = None,
 ) -> Path:
-    """Create `logs/<run_name>/` and return it.
+    """Create `logs/<UTC-stamp>_<name>/` and return it.
 
-    run_name defaults to `<UTC-stamp>_<model>_<run_type>`.
+    The UTC timestamp is ALWAYS prefixed so re-running the same config
+    never collides with an earlier run's `epoch_log.csv`. When `run_name`
+    is None, the suffix is auto-generated as `<model>_<run_type>`.
     """
-    if run_name is None:
-        run_name = f"{_stamp()}_{model}_{run_type}"
-    run_dir = Path(base) / run_name
+    stamp  = _stamp()
+    suffix = run_name if run_name else f"{model}_{run_type}"
+    run_dir = Path(base) / f"{stamp}_{suffix}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 

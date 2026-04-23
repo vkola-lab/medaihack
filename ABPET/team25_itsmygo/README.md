@@ -105,31 +105,42 @@ the validation set (n = 500).
 ---
 ## Ongoing Work
 
-Following the hackathon, we conducted systematic ablations to better
-understand which architectural choices drove the competition result.
-All numbers in this section are from internal `dev/evaluate.py` so that
-ablations are compared apples-to-apples against the same scorer; the
-**final** competition result is the leaderboard 11.7916 CL reported
-above. Two findings are being prepared as a separate technical report:
+Following the hackathon, we ran a post-hoc **factorial ablation** over
+the three tracer-conditioning sites in `PETResNet` — TracerNorm (input),
+FiLM (per-stage), and tracer-embedding GAP concat (head) — to isolate
+each one's contribution. All numbers below are from internal
+`dev/evaluate.py` on the same 500-subject validation split, so ablation
+rows are comparable apples-to-apples against the submission's internal
+11.73 CL. The **final** competition score remains the leaderboard
+11.7916 CL reported above.
 
-- **Tracer conditioning ablation.** Removing per-layer FiLM and head-level
-  tracer embedding (while retaining input-level TracerNorm) improves
-  internal validation MAE from 11.73 → 9.03 CL. This is consistent with
-  the tracer-agnostic design of the Centiloid scale: once per-tracer
-  intensity calibration is handled at the input (TracerNorm), further
-  per-layer conditioning introduces shortcut learning rather than useful
-  signal.
+| Variant | TracerNorm | FiLM | GAP concat | Val MAE | Δ vs submission |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Submission (`PETResNet`)             | ✓ | ✓ | ✓ | 11.79 | — |
+| `PETResNetNoGAP` (`−GAP`)            | ✓ | ✓ | — | 10.83 | −0.96 |
+| `PETResNetNoFiLM` (`−FiLM`)          | ✓ | — | ✓ | 10.49 | −1.30 |
+| `PETResNetTracerNormOnly`            | ✓ | — | — | **9.03** | **−2.76** |
 
-- **Spatial attention extension.** Adding CBAM-style spatial attention at
-  stage 4 (analogous to the Klunk CTX target VOI) accelerates early
-  convergence by ~2× but does not improve final accuracy in this
-  configuration (10.02 CL internal). We interpret this as evidence that
-  the backbone already learns region-selectivity implicitly on 2k samples.
+Key findings:
 
-Details, per-tracer breakdowns, and seed ablations are tracked in
-[`ablations/`](ablations/). The competition submission (`PETResNet` with
-FiLM + tracer embedding, **leaderboard MAE 11.7916 CL**) remains the
-canonical reference reported above.
+- **TracerNorm alone is sufficient.** With FiLM and the GAP concat both
+  removed, the 8 learned (γ_t, β_t) scalars in TracerNorm carry the
+  cross-tracer conditioning load on their own and achieve the lowest
+  internal MAE.
+- **FiLM is the dominant capacity sink.** Its removal is the single
+  intervention that restores physical alignment between learned γ_t and
+  the published CL-per-SUVR conversion slopes (Pearson r flips from
+  −0.71 to +0.69; further removing the GAP concat sharpens it to +0.93).
+- **Predictive performance and physical interpretability decouple.** The
+  −GAP and −FiLM variants land within 0.34 CL of each other but have
+  *opposite* γ_t-vs-slope correlations — MAE alone is not evidence for
+  interpretability.
+
+See [`ablations/`](ablations/) for per-variant configs, the write-up in
+[`ablations/studies/tracer_conditioning.md`](ablations/studies/tracer_conditioning.md),
+and the TracerNorm parameter-inspection script. The competition
+submission (`PETResNet` with all three conditioning sites,
+**leaderboard MAE 11.7916 CL**) remains the canonical reference.
 
 ---
 
@@ -211,7 +222,7 @@ JS, no server. This is optional and not on the evaluation path.
 ABPET/
 ├── mygo_centiloid/               # Installable Python package
 │   ├── model/                        PETResNet + factorial ablation variants
-│   │   ├── petresnet_film.py                canonical model (TracerNorm + FiLM + GAP concat)
+│   │   ├── petresnet.py                     canonical model (TracerNorm + FiLM + GAP concat)
 │   │   ├── petresnet_no_gap.py              ablation: TracerNorm + FiLM
 │   │   ├── petresnet_no_film.py             ablation: TracerNorm + GAP concat
 │   │   └── petresnet_tracer_norm_only.py    ablation: TracerNorm only
@@ -381,26 +392,37 @@ any of these). The following steps were applied in order:
 
 ## Outputs
 
-All outputs are organized under `results/` and `checkpoints/`:
+Training runs are organized under `logs/<UTC-stamp>_<run_name>/`. The
+UTC timestamp is **always** prefixed (even when `run.name` is set in the
+YAML) so re-running the same config never collides with an earlier run's
+`epoch_log.csv`. Inference and EDA outputs live under `results/`.
 
 ```
+logs/
+├── 20260423-233325_ablation_tracer_norm_only/    one folder per train run
+│   ├── config.json                               full config + git commit + host + argv
+│   ├── epoch_log.csv                             per-epoch: train_loss, val_mae, val_r, lr
+│   ├── metrics.json                              final summary (best MAE, r, epochs, ckpt paths)
+│   └── checkpoints/
+│       ├── best_model.pt                         lowest val MAE
+│       └── last_model.pt                         most recent epoch
+└── runs.jsonl                                    global append-only registry (one JSON line per run)
+
 results/
-├── predictions.csv                        from dev/predict.py
+├── predictions.csv                               from dev/predict.py
 └── eda/
-    ├── pre_train/                         from scripts 01–03 (data analysis)
+    ├── pre_train/                                from scripts 01–03 (data analysis)
     │   ├── 01_centiloid_distribution/
     │   ├── 02_tracer_comparison/
     │   └── 03_calibration_analysis/
-    └── post_train/                        from script 04 (model error analysis)
+    └── post_train/                               from script 04 (model error analysis)
         └── 04_model_error_analysis/
-
-checkpoints/
-├── best_model.pt                          lowest val MAE
-└── last_model.pt                          most recent epoch
 ```
 
 Each EDA folder contains `*.png` figures and a `*.txt` summary report
-with auditable numbers.
+with auditable numbers. The judges' `predict.sh` entry point still reads
+the submission checkpoint from `checkpoints/best_model.pt` (the
+hackathon-mandated path, not a training output).
 
 ---
 
@@ -429,7 +451,7 @@ bash predict.sh <test.csv> <checkpoint.pt> predictions.csv
 1. Best checkpoint at `checkpoints/best_model.pt` (lowest val MAE).
 2. `predict.sh` has the team venv path hardcoded (line 28).
 3. `dev/predict.py` instantiates `PETResNet` from
-   `mygo_centiloid.model.petresnet_film`.
+   `mygo_centiloid.model.petresnet`.
 4. Smoke test: `bash predict.sh data/val.csv checkpoints/best_model.pt predictions.csv`
    produces a 500-row CSV without errors.
 

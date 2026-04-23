@@ -334,7 +334,6 @@ def main():
             "dropout_high":       M["dropout_high"],
             "dropout_low":        M["dropout_low"],
             "freeze_tracer_norm": M["freeze_tracer_norm"],
-            "attention_kernel":   M.get("attention_kernel", 7),
         }
         torch.save(ckpt, last_ckpt)
 

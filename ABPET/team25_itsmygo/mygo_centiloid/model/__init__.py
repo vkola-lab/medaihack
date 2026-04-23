@@ -9,7 +9,7 @@ ablation variants reported in §3.5 / §4.3 of the MYGO-Centiloid report:
     PETResNetTracerNormOnly    TracerNorm                            9.03 CL
 """
 
-from mygo_centiloid.model.petresnet_film import (
+from mygo_centiloid.model.petresnet import (
     PETResNet, BaselineCNN, TracerNorm, FiLMBlock, ResBlock3D,
 )
 from mygo_centiloid.model.petresnet_no_gap           import PETResNetNoGAP
