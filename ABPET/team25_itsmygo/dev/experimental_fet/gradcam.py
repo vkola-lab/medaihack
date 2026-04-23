@@ -1,7 +1,8 @@
 """
 gradcam.py  —  EXPERIMENTAL, not part of the main pipeline
 
-3D Grad-CAM overlays for PETResNet / PETResNetNoFiLM checkpoints.
+3D Grad-CAM overlays for any PETResNet variant checkpoint
+(PETResNet, PETResNetNoGAP, PETResNetNoFiLM, PETResNetTracerNormOnly).
 
 Methods (select with --method):
     hirescam         HiResCAM at a single layer.  Keeps `grad ⊙ activation`
@@ -47,7 +48,10 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mygo_centiloid import PETDataset, PETResNet, PETResNetNoFiLM
+from mygo_centiloid import (
+    PETDataset,
+    PETResNet, PETResNetNoGAP, PETResNetNoFiLM, PETResNetTracerNormOnly,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,8 +68,22 @@ def load_model(ckpt_path: str, device: torch.device):
     name = ckpt.get("model", "petresnet")
     num_tracers = ckpt["num_tracers"]
 
-    if name == "petresnet_no_film":
+    if name == "petresnet_no_gap":
+        model = PETResNetNoGAP(
+            num_tracers  = num_tracers,
+            emb_dim      = ckpt.get("emb_dim", 32),
+            dropout_high = ckpt.get("dropout_high", 0.4),
+            dropout_low  = ckpt.get("dropout_low",  0.2),
+        ).to(device)
+    elif name == "petresnet_no_film":
         model = PETResNetNoFiLM(
+            num_tracers  = num_tracers,
+            emb_dim      = ckpt.get("emb_dim", 32),
+            dropout_high = ckpt.get("dropout_high", 0.4),
+            dropout_low  = ckpt.get("dropout_low",  0.2),
+        ).to(device)
+    elif name == "petresnet_tracer_norm_only":
+        model = PETResNetTracerNormOnly(
             num_tracers  = num_tracers,
             dropout_high = ckpt.get("dropout_high", 0.4),
             dropout_low  = ckpt.get("dropout_low",  0.2),

@@ -1,9 +1,11 @@
-# TracerNorm ABLATION — trains with tracer_norm frozen at identity
-# (γ=1, β=0, not updated by the optimizer). Use this to measure TracerNorm's
-# real contribution: compare best val MAE to a baseline run from train.yaml.
+# TracerNorm-only ablation — report §3.5 Table 2, §4.3 Table 4 (MAE 9.03 CL).
+#
+# Variant: TracerNorm kept; FiLM blocks removed; tracer-embedding GAP concat
+#          removed. Tracer identity reaches the network exclusively through
+#          the input-space (γ_t, β_t) in TracerNorm.
 #
 # Launch:
-#     bash dev/train.sh ablations/configs/train_no_tracernorm.yaml
+#     bash dev/train.sh ablations/configs/tracer_norm_only.yaml
 
 paths:
   train_csv: data/train.csv
@@ -12,15 +14,15 @@ paths:
   checkpoint_dir: null        # null  → <run_dir>/checkpoints
 
 run:
-  name: ablation_no_tracernorm   # tag the run folder so it's easy to find
+  name: ablation_tracer_norm_only
   seed: 42
 
 model:
-  name: petresnet_no_film     # petresnet | petresnet_no_film
-  emb_dim:      32
+  name: petresnet_tracer_norm_only
+  emb_dim:      32            # unused by this variant; kept for schema compat
   dropout_high: 0.4
   dropout_low:  0.2
-  freeze_tracer_norm: true    # ← the ablation: γ=1, β=0, not trained
+  freeze_tracer_norm: false   # TracerNorm is trained — the point of this arm
 
 training:
   epochs:       100

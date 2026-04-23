@@ -19,7 +19,10 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mygo_centiloid import PETDataset, PETResNet, PETResNetNoFiLM
+from mygo_centiloid import (
+    PETDataset,
+    PETResNet, PETResNetNoGAP, PETResNetNoFiLM, PETResNetTracerNormOnly,
+)
 from mygo_centiloid.utils import (
     make_run_dir, write_config, write_metrics, append_registry,
 )
@@ -113,8 +116,22 @@ def main():
     )
 
     # ── Model (dispatch on checkpoint's recorded architecture) ────────────
-    if model_name == "petresnet_no_film":
+    if model_name == "petresnet_no_gap":
+        model = PETResNetNoGAP(
+            num_tracers  = num_tracers,
+            emb_dim      = emb_dim,
+            dropout_high = dropout_high,
+            dropout_low  = dropout_low,
+        ).to(device)
+    elif model_name == "petresnet_no_film":
         model = PETResNetNoFiLM(
+            num_tracers  = num_tracers,
+            emb_dim      = emb_dim,
+            dropout_high = dropout_high,
+            dropout_low  = dropout_low,
+        ).to(device)
+    elif model_name == "petresnet_tracer_norm_only":
+        model = PETResNetTracerNormOnly(
             num_tracers  = num_tracers,
             dropout_high = dropout_high,
             dropout_low  = dropout_low,

@@ -210,11 +210,11 @@ JS, no server. This is optional and not on the evaluation path.
 ```text
 ABPET/
 ├── mygo_centiloid/               # Installable Python package
-│   ├── model/                        PETResNet (+ FiLM / attn variants)
-│   │   ├── petresnet_film.py         canonical model (TracerNorm + FiLM)
-│   │   ├── petresnet_no_film.py      ablation: TracerNorm only
-│   │   ├── petresnet_attn.py         ablation: CBAM spatial attention
-│   │   └── petresnet_attn_gated.py   ablation: gated attention
+│   ├── model/                        PETResNet + factorial ablation variants
+│   │   ├── petresnet_film.py                canonical model (TracerNorm + FiLM + GAP concat)
+│   │   ├── petresnet_no_gap.py              ablation: TracerNorm + FiLM
+│   │   ├── petresnet_no_film.py             ablation: TracerNorm + GAP concat
+│   │   └── petresnet_tracer_norm_only.py    ablation: TracerNorm only
 │   ├── losses/losses.py              CentiloidLoss, get_criterion
 │   ├── data/dataset.py               PETDataset
 │   ├── data/augmentation.py          build_train_transform (per-tracer strength)
@@ -234,16 +234,14 @@ ABPET/
 ├── ablations/                    # Post-hackathon studies (see ablations/README.md)
 │   ├── README.md                     index + headline results
 │   ├── configs/
-│   │   ├── train_no_tracernorm.yaml  No-FiLM / TracerNorm-only variant
-│   │   ├── stage3_attn.yaml          + stage-4 CBAM attention
-│   │   └── stage3_attn_gated.yaml    residual / zero-init attention
+│   │   ├── no_gap.yaml               −GAP       (TracerNorm + FiLM)
+│   │   ├── no_film.yaml              −FiLM      (TracerNorm + GAP concat)
+│   │   └── tracer_norm_only.yaml     TN-only    (TracerNorm only)
 │   ├── scripts/
 │   │   ├── ablate_tracer_norm.py     toggle TracerNorm → identity at inference
-│   │   ├── inspect_tracer_norm.py    dump learned γ / β per tracer
-│   │   └── inspect_attention.py      render attention maps over PET slices
+│   │   └── inspect_tracer_norm.py    dump learned γ / β per tracer
 │   └── studies/
-│       ├── tracer_conditioning.md    No-FiLM write-up
-│       └── attention_study.md        stage-4 CBAM write-up
+│       └── tracer_conditioning.md    4-variant factorial write-up
 │
 ├── eda/                          # EDA suite (see eda/README.md)
 │   ├── 01_centiloid_distribution.py  pre-train: target distribution

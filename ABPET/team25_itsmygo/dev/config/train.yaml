@@ -18,7 +18,7 @@ run:
   seed: 42
 
 model:
-  name: petresnet             # petresnet | petresnet_no_film
+  name: petresnet             # petresnet | petresnet_no_gap | petresnet_no_film | petresnet_tracer_norm_only
   emb_dim:      32
   dropout_high: 0.4
   dropout_low:  0.2

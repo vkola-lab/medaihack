@@ -151,7 +151,8 @@ def parse_args():
                         help="Path to val.csv (must have ID, CENTILOIDS, TRACER.AMY)")
     parser.add_argument("--model",    type=str, default="unknown",
                         help="Model name for registry bookkeeping "
-                             "(e.g. petresnet, petresnet_no_film).")
+                             "(e.g. petresnet, petresnet_no_gap, "
+                             "petresnet_no_film, petresnet_tracer_norm_only).")
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--log_dir",  type=str, default="logs")
     return parser.parse_args()

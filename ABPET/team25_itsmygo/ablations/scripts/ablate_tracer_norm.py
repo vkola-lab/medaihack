@@ -13,7 +13,7 @@ Requires the val CSV to have CENTILOIDS (ground truth).
 Usage:
     python ablations/scripts/ablate_tracer_norm.py \\
         --csv        /projectnb/medaihack/ABPET/data/val.csv \\
-        --checkpoint checkpoints/no_film/best_model.pt
+        --checkpoint checkpoints/tracer_norm_only/best_model.pt
 """
 
 import argparse
@@ -26,7 +26,10 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mygo_centiloid import PETDataset, PETResNet, PETResNetNoFiLM
+from mygo_centiloid import (
+    PETDataset,
+    PETResNet, PETResNetNoGAP, PETResNetNoFiLM, PETResNetTracerNormOnly,
+)
 
 
 @torch.no_grad()
@@ -62,8 +65,12 @@ def build_model(ckpt, device):
         dropout_high=ckpt.get("dropout_high", 0.4),
         dropout_low=ckpt.get("dropout_low", 0.2),
     )
-    if name == "petresnet_no_film":
-        model = PETResNetNoFiLM(**kw).to(device)
+    if name == "petresnet_tracer_norm_only":
+        model = PETResNetTracerNormOnly(**kw).to(device)
+    elif name == "petresnet_no_gap":
+        model = PETResNetNoGAP(emb_dim=ckpt.get("emb_dim", 32), **kw).to(device)
+    elif name == "petresnet_no_film":
+        model = PETResNetNoFiLM(emb_dim=ckpt.get("emb_dim", 32), **kw).to(device)
     else:
         model = PETResNet(emb_dim=ckpt.get("emb_dim", 32), **kw).to(device)
 

@@ -29,7 +29,8 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mygo_centiloid import (
-    PETDataset, PETResNet, PETResNetNoFiLM, PETResNetAttn, PETResNetAttnGated,
+    PETDataset,
+    PETResNet, PETResNetNoGAP, PETResNetNoFiLM, PETResNetTracerNormOnly,
     get_criterion,
 )
 from mygo_centiloid.utils import (
@@ -240,28 +241,28 @@ def main():
             dropout_low    = M["dropout_low"],
             mean_centiloid = mean_cl,
         ).to(device)
-    elif M["name"] == "petresnet_no_film":
-        model = PETResNetNoFiLM(
+    elif M["name"] == "petresnet_no_gap":
+        model = PETResNetNoGAP(
             num_tracers    = num_tracers,
+            emb_dim        = M["emb_dim"],
             dropout_high   = M["dropout_high"],
             dropout_low    = M["dropout_low"],
             mean_centiloid = mean_cl,
         ).to(device)
-    elif M["name"] == "petresnet_attn":
-        model = PETResNetAttn(
-            num_tracers      = num_tracers,
-            dropout_high     = M["dropout_high"],
-            dropout_low      = M["dropout_low"],
-            mean_centiloid   = mean_cl,
-            attention_kernel = M.get("attention_kernel", 7),
+    elif M["name"] == "petresnet_no_film":
+        model = PETResNetNoFiLM(
+            num_tracers    = num_tracers,
+            emb_dim        = M["emb_dim"],
+            dropout_high   = M["dropout_high"],
+            dropout_low    = M["dropout_low"],
+            mean_centiloid = mean_cl,
         ).to(device)
-    elif M["name"] == "petresnet_attn_gated":
-        model = PETResNetAttnGated(
-            num_tracers      = num_tracers,
-            dropout_high     = M["dropout_high"],
-            dropout_low      = M["dropout_low"],
-            mean_centiloid   = mean_cl,
-            attention_kernel = M.get("attention_kernel", 7),
+    elif M["name"] == "petresnet_tracer_norm_only":
+        model = PETResNetTracerNormOnly(
+            num_tracers    = num_tracers,
+            dropout_high   = M["dropout_high"],
+            dropout_low    = M["dropout_low"],
+            mean_centiloid = mean_cl,
         ).to(device)
     else:
         raise ValueError(f"Unknown model.name: {M['name']!r}")

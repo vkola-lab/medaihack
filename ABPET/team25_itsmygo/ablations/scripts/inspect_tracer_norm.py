@@ -2,11 +2,12 @@
 inspect_tracer_norm.py  —  EXPERIMENTAL, not part of the main pipeline
 
 Dumps the learned per-tracer scale (γ) / shift (β) from a trained checkpoint.
-Works for both PETResNet (with FiLM) and PETResNetNoFiLM — both expose
+Works for all four variants in the report (PETResNet, PETResNetNoGAP,
+PETResNetNoFiLM, PETResNetTracerNormOnly) — every variant exposes
 `tracer_norm.scale.weight` and `tracer_norm.shift.weight`.
 
 Usage:
-    python ablations/scripts/inspect_tracer_norm.py --ckpt checkpoints/no_film/best_model.pt
+    python ablations/scripts/inspect_tracer_norm.py --ckpt checkpoints/tracer_norm_only/best_model.pt
 """
 
 import argparse

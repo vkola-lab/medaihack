@@ -1,0 +1,43 @@
+# −GAP ablation — report §3.5 Table 2, §4.3 Table 4 (MAE 10.83 CL).
+#
+# Variant: TracerNorm + per-stage FiLM kept; tracer-embedding GAP concat
+#          removed (feat_dim: 544 → 512). FiLM is still driven by the shared
+#          tracer embedding.
+#
+# Launch:
+#     bash dev/train.sh ablations/configs/no_gap.yaml
+
+paths:
+  train_csv: data/train.csv
+  val_csv:   data/val.csv
+  log_dir:   logs
+  checkpoint_dir: null
+
+run:
+  name: ablation_no_gap
+  seed: 42
+
+model:
+  name: petresnet_no_gap
+  emb_dim:      32
+  dropout_high: 0.4
+  dropout_low:  0.2
+  freeze_tracer_norm: false
+
+training:
+  epochs:       100
+  batch_size:   4
+  num_workers:  4
+  lr:           1.0e-4
+  weight_decay: 1.0e-4
+  clip_grad:    1.0
+  patience:     20
+
+augmentation:
+  enabled:    true
+  per_tracer: true
+
+loss:
+  name:  centiloid
+  delta: 25.0
+  alpha: 0.7

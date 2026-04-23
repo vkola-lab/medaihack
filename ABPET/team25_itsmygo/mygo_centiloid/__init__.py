@@ -3,7 +3,10 @@ mygo_centiloid — Amyloid β-PET Centiloid Prediction package.
 
 Public API (all callers should import from here, not from submodules):
 
-    from mygo_centiloid import mygo_centiloid, BaselineCNN          # architecture
+    from mygo_centiloid import PETResNet, BaselineCNN           # submission
+    from mygo_centiloid import PETResNetNoGAP                   # −GAP ablation
+    from mygo_centiloid import PETResNetNoFiLM                  # −FiLM ablation
+    from mygo_centiloid import PETResNetTracerNormOnly          # TN-only ablation
     from mygo_centiloid import PETDataset                       # data
     from mygo_centiloid import build_train_transform            # augmentation
     from mygo_centiloid import CentiloidLoss, get_criterion     # losses
@@ -11,21 +14,19 @@ Public API (all callers should import from here, not from submodules):
 
 from mygo_centiloid.data.dataset      import PETDataset
 from mygo_centiloid.data.augmentation import build_train_transform
-from mygo_centiloid.model.petresnet_film          import PETResNet, BaselineCNN
-from mygo_centiloid.model.petresnet_no_film  import PETResNetNoFiLM
-from mygo_centiloid.model.petresnet_attn     import PETResNetAttn, SpatialAttention3D
-from mygo_centiloid.model.petresnet_attn_gated import PETResNetAttnGated, SpatialAttention3DGated
-from mygo_centiloid.losses.losses             import CentiloidLoss, get_criterion
+from mygo_centiloid.model.petresnet_film             import PETResNet, BaselineCNN
+from mygo_centiloid.model.petresnet_no_gap           import PETResNetNoGAP
+from mygo_centiloid.model.petresnet_no_film          import PETResNetNoFiLM
+from mygo_centiloid.model.petresnet_tracer_norm_only import PETResNetTracerNormOnly
+from mygo_centiloid.losses.losses                    import CentiloidLoss, get_criterion
 
 __all__ = [
     "PETDataset",
     "build_train_transform",
     "PETResNet",
+    "PETResNetNoGAP",
     "PETResNetNoFiLM",
-    "PETResNetAttn",
-    "SpatialAttention3D",
-    "PETResNetAttnGated",
-    "SpatialAttention3DGated",
+    "PETResNetTracerNormOnly",
     "BaselineCNN",
     "CentiloidLoss",
     "get_criterion",
