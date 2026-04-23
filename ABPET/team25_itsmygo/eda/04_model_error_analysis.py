@@ -150,13 +150,21 @@ def plot_predicted_vs_actual(df: pd.DataFrame, out_dir: str):
     lim = [min(df["CENTILOIDS"].min(), df["PREDICTED_CENTILOIDS"].min()) - 5,
            max(df["CENTILOIDS"].max(), df["PREDICTED_CENTILOIDS"].max()) + 5]
 
+    # Shared fit line (same underlying data, so identical in both panels)
+    m, b  = np.polyfit(df["CENTILOIDS"], df["PREDICTED_CENTILOIDS"], 1)
+    r, _  = stats.pearsonr(df["CENTILOIDS"], df["PREDICTED_CENTILOIDS"])
+    mae   = df["abs_error"].mean()
+    x_fit = np.linspace(*lim, 200)
+
     for ax, color_by in zip(axes, ["tracer", "error"]):
+        tracer_handles = []
         if color_by == "tracer":
             for tracer in TRACER_ORDER:
                 sub = df[df["TRACER.AMY"] == tracer]
-                ax.scatter(sub["CENTILOIDS"], sub["PREDICTED_CENTILOIDS"],
-                           color=TRACER_COLORS[tracer], alpha=0.55,
-                           s=25, label=tracer)
+                h = ax.scatter(sub["CENTILOIDS"], sub["PREDICTED_CENTILOIDS"],
+                               color=TRACER_COLORS[tracer], alpha=0.55,
+                               s=25, label=tracer)
+                tracer_handles.append(h)
             ax.set_title("Colored by Tracer")
         else:
             sc = ax.scatter(df["CENTILOIDS"], df["PREDICTED_CENTILOIDS"],
@@ -166,26 +174,30 @@ def plot_predicted_vs_actual(df: pd.DataFrame, out_dir: str):
             plt.colorbar(sc, ax=ax, label="Absolute Error (CL)")
             ax.set_title("Colored by Absolute Error")
 
-        # Identity line
-        ax.plot(lim, lim, "k--", lw=1.8, label="y = x (perfect)")
-        # Regression line
-        m, b   = np.polyfit(df["CENTILOIDS"], df["PREDICTED_CENTILOIDS"], 1)
-        x_fit  = np.linspace(*lim, 200)
-        ax.plot(x_fit, m * x_fit + b, "b-", lw=1.5, alpha=0.7,
-                label=f"Fit: y={m:.2f}x+{b:.2f}")
+        # Reference lines (NOT added to the legend — annotated inline instead)
+        ax.plot(lim, lim, "k--", lw=1.8)
+        ax.plot(x_fit, m * x_fit + b, "b-", lw=1.5, alpha=0.7)
 
-        r, _  = stats.pearsonr(df["CENTILOIDS"], df["PREDICTED_CENTILOIDS"])
-        mae   = df["abs_error"].mean()
-        ax.text(0.97, 0.03,
-                f"MAE={mae:.2f} CL\nPearson r={r:.3f}\nn={len(df)}",
-                transform=ax.transAxes, va="bottom", ha="right", fontsize=11,
-                bbox=dict(fc="white", ec="gray", alpha=0.8))
+        # Single stats box: fit equation, Pearson r, MAE, n — placed at the
+        # bottom-right so it never collides with the tracer legend (top-left).
+        stats_txt = (f"y = x (perfect)\n"
+                     f"Fit: y = {m:.2f}x + {b:.2f}\n"
+                     f"Pearson r = {r:.3f}\n"
+                     f"MAE = {mae:.2f} CL\n"
+                     f"n = {len(df)}")
+        ax.text(0.97, 0.03, stats_txt,
+                transform=ax.transAxes, va="bottom", ha="right", fontsize=10,
+                bbox=dict(fc="white", ec="gray", alpha=0.9))
 
         ax.set_xlim(lim); ax.set_ylim(lim)
         ax.set_xlabel("Actual Centiloid (CL)")
         ax.set_ylabel("Predicted Centiloid (CL)")
-        ax.legend(fontsize=9, loc="upper left", framealpha=0.9)
         ax.set_aspect("equal")
+
+        # Legend only on the tracer panel, and only for tracer markers.
+        if tracer_handles:
+            ax.legend(handles=tracer_handles, title="Tracer",
+                      fontsize=9, loc="upper left", framealpha=0.9)
 
     plt.tight_layout()
     path = os.path.join(out_dir, "01_predicted_vs_actual.png")
