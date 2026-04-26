@@ -1,0 +1,19 @@
+# VI-LUAD Hackathon — Python dependencies
+#
+# Setup:
+#   module load medaihack/spring-2026
+#   module load python3/3.12.4
+#   virtualenv /projectnb/medaihack/YOUR_TEAM/vi_luad
+#   source /projectnb/medaihack/YOUR_TEAM/vi_luad/bin/activate
+#   pip install -r requirements.txt
+
+torch==2.8.0
+torchvision==0.23.0
+timm==1.0.24
+numpy==1.26.4
+Pillow==10.4.0
+opencv-python==4.9.0.80
+openslide-bin==4.0.0.13 # OpenSlide C library (required by openslide-python)
+openslide-python==1.4.1
+scikit-learn==1.4.0
+jupyter                 # Jupyter Notebook, JupyterLab, IPython (for OnDemand and VS Code)
