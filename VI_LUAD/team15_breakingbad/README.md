@@ -1,3 +1,23 @@
+# MedAIhack submission VI-LUAD Breaking Bad
+**Team 15 - Breaking Bad**
+
+Members:
+- Sanjiv Sridhar
+- Tarushi Gandhi
+- Jigar Kanakhara
+- Aum Ghelani
+- Harsha B Beth
+
+# Project summary:
+
+We built a patient-level Multiple Instance Learning pipeline for vascular invasion prediction using pre-extracted UNI2-h pathology patch embeddings. We added 2D sinusoidal positional encodings to incorporate slide spatial information, projected features into a lower-dimensional space, and trained an ACMIL model with five gated-attention branches. During training, we used Stochastic Top-K Instance Masking to prevent attention collapse and added Attention Entropy Maximization to encourage the model to focus on diverse informative regions. The loss combined patient-level max BCE, branch-wise cross-entropy, label smoothing, class weighting, and entropy regularization. We used patient-level stratified 5-fold cross-validation, held-out validation for early stopping and temperature scaling, and trained five seeds per fold. Final predictions came from a 25-model ensemble with calibrated and clipped probabilities.
+
+
+## File descriptions and setup instructions same as the starter code given below:
+
+
+
+
 # VI-LUAD Starter Code
 
 This starter code gives you a working end-to-end pipeline for the VI-LUAD classification task. Run it as-is to get a baseline, then explore and improve specific steps. Refer to the provided slide deck for task background, data description, and evaluation criteria.
