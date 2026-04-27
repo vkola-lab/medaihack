@@ -42,7 +42,7 @@ extreme right-skew and 64.8 % negative-class imbalance in the Centiloid
 distribution.
 
 > **External test set (final, official):** MAE **12.555 CL**. \
-> **Validation leaderboard:** MAE **11.7916 CL** — a **40.4 %** MAE reduction over the 3D CNN baseline (19.77 CL) provided by the hackathon organizers. Pearson r (internal) = 0.936.
+> **Validation leaderboard:** MAE **11.7916 CL** — a **58.1 %** MAE reduction over the 3D CNN baseline (28.1269 CL) provided by the hackathon organizers. Pearson r (internal) = 0.936.
 
 <p align="center">
   <img src="figures/architecture/pet_resnet_film.png" width="900" alt="PETResNet architecture"/>
@@ -83,10 +83,10 @@ the validation set (n = 500).
 | | 3D CNN baseline | **MYGO (ours)** |
 |---|-----------------|---|
 | **Overall MAE (external test, official)** | — | **12.555 CL** |
-| **Overall MAE (val leaderboard, final)** | 19.77 CL | **11.7916 CL** |
+| **Overall MAE (val leaderboard, final)** | 28.1269 CL | **11.7916 CL** |
 | **Overall Pearson r (internal)** | 0.790 | **0.936** |
 
-**Improvement (val leaderboard):** MAE 19.77 → 11.79 (−7.98 CL, **40.4 % reduction**).
+**Improvement (val leaderboard):** MAE 28.13 → 11.79 (−16.34 CL, **58.1 % reduction**).
 
 **Per-tracer breakdown (internal `dev/evaluate.py`):**
 
@@ -99,9 +99,12 @@ the validation set (n = 500).
 | NAV | 17  | 13.86               | **9.28** | 0.946             | **0.981** |
 
 > Per-tracer rows are from our internal eval script on the 500-subject
-> validation split (weighted average 11.73 CL). The val-leaderboard
-> number is **11.7916 CL**; the 0.06 CL delta vs. our internal script
-> reflects differences in the scoring scripts and is expected. \
+> validation split (weighted average 11.73 CL for MYGO, 19.77 CL for the
+> baseline). The val-leaderboard numbers are **11.7916 CL** (MYGO) and
+> **28.1269 CL** (baseline); the deltas vs. our internal script reflect
+> differences in the scoring scripts and are expected — the per-tracer
+> table here is the apples-to-apples internal comparison, while the
+> headline 58.1 % reduction uses the leaderboard numbers. \
 > The **official competition score on the held-out external test set**
 > is **12.555 CL** — reported separately because the test split is not
 > available locally for per-tracer breakdown.
