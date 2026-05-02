@@ -1,0 +1,10 @@
+--extra-index-url https://download.pytorch.org/whl/cu129
+polars==1.39.3
+torch==2.8.0+cu129
+torchaudio==2.8.0+cu129
+torchvision==0.23.0+cu129
+numpy==1.26.4
+pandas==3.0.1
+matplotlib==3.7.5
+scikit-learn==1.8.0
+jupyter
