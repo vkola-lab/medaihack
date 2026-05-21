@@ -1,22 +1,11 @@
 Natural Light
 Team Members: Michael French, Connor Spannuth, Ajay Raman, Justin Jin, Dia Jain
 
-Project Summary: Using the advice given at the bottom of the origional ReadMe, with the help of Terrier GPT we 
-updated the initial mean pooling implementation of the AI model to utilize Attention pooling. The total amount of
-changes to the base code is very short and only too place in model.py! In the Init Function we used a size 32 hidden attention space size 
-and two feature branches that will be later used to distinguish feature weights as well as a scoring 
-layer to turn the final output in to a scalar value for each pach.
+Project Summary: Using the advice given at the bottom of the original ReadMe, with the help of Terrier GPT we updated the initial mean pooling implementation of the AI model to utilize Attention pooling. The total amount of changes to the base code is very short and only too place in model.py! In the Init Function we used a size 32 hidden attention space size and two feature branches that will be later used to distinguish feature weights as well as a scoring layer to turn the final output in to a scalar value for each patch.
 
-In the "forward" function each patch embedding is projected into the attention space then passed through a tanh and sigmoid
-function. The purpose of the tanh is to represent the features non-linearly between -1 and 1, this bound pairs well with the
-sigmoid function what bounds the feature values between 0 and 1. When the two are multiplied together, we get a compact idea 
-of which features in the current patch are important and which are not. The sigmoid scales the represented features provided 
-by the tanh function. This allows specific patches proven to be valuable in the past to out shine
-background or less important ones. In contrast to the origional mean pooling implementation, which placed an equal level of 
-importance on all patches, now this attention pooling implementation will give the model a sense of priority.
+In the "forward" function each patch embedding is projected into the attention space then passed through a tanh and sigmoid function. The purpose of the tanh is to represent the features non-linearly between -1 and 1, this bound pairs well with the sigmoid function what bounds the feature values between 0 and 1. When the two are multiplied together, we get a compact idea of which features in the current patch are important and which are not. The sigmoid scales the represented features provided by the tanh function. This allows specific patches proven to be valuable in the past to out shine background or less important ones. In contrast to the original mean pooling implementation, which placed an equal level of importance on all patches, now this attention pooling implementation will give the model a sense of priority.
 
-The final scores are then prcessed through the scoring layer, each scalar is normalized via softmax, then applied 
-to its respective patch!
+The final scores are then processed through the scoring layer, each scalar is normalized via SoftMax, then applied to its respective patch!
 
 File Description/Setup instruction/Commands (Same as previously given):
 
